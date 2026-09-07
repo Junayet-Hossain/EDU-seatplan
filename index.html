@@ -151,6 +151,7 @@ let courses = [
 
 // ── RENDER SIDEBAR ────────────────────────────────────────────────
 function renderRooms() {
+  selectedPresets.clear();
   const usedIds = rooms.map(r => r.id);
   const available = ROOM_PRESETS.filter(p => !usedIds.includes(p.id));
 
