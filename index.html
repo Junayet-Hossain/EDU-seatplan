@@ -299,29 +299,6 @@ function allocate(rooms, courses) {
     if(count>0)rawOverflows.push({course:code,count,preferredRoom:lastRoom[code]});
   }
 
-  // Pass 3: swap to eliminate overflows  (separate from Pass 2)
-  let swapImproved=true;
-  while(swapImproved&&rawOverflows.length>0){
-    swapImproved=false;
-    for(let oi=rawOverflows.length-1;oi>=0;oi--){
-      const ov=rawOverflows[oi];
-      const ovRooms=new Set(slots.filter(s=>s.course===ov.course).map(s=>s.roomId));
-      let elim=false;
-      for(const slot of slots){
-        if(!slot.course||slot.course===ov.course)continue;
-        if(ovRooms.has(slot.roomId))continue;
-        const displaced=slot.course;
-        const dispRooms=new Set(slots.filter(s=>s.course===displaced&&s!==slot).map(s=>s.roomId));
-        const free=slots.find(s=>!s.course&&!dispRooms.has(s.roomId));
-        if(!free||free.cap<slot.filled)continue;
-        free.course=displaced;free.filled=slot.filled;
-        slot.course=ov.course;slot.filled=Math.min(ov.count,slot.cap);
-        ov.count-=slot.filled;
-        if(ov.count<=0){rawOverflows.splice(oi,1);swapImproved=true;elim=true;break;}
-      }
-      if(elim)break;
-    }
-  }
 
   // Build grid map for corner adjacency
   const gridMap={};
