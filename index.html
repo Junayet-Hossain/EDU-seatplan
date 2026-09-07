@@ -4,13 +4,14 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>EDU Seat Plan Generator — East Delta University</title>
+<link rel="icon" type="image/png" href="edu-logo.png?v=2" id="favicon-link">
 <script src="https://cdn.jsdelivr.net/npm/docx@8.5.0/build/index.umd.js"></script>
 <style>
   :root {
-    --navy:#1a2744;--navy2:#243058;--gold:#c8972a;--gold2:#e8b84b;
-    --light:#f5f7fa;--border:#dce2ec;--text:#1e2533;--muted:#6b7591;
+    --navy:#6b0f1a;--navy2:#8b1a2a;--gold:#c8972a;--gold2:#e8b84b;
+    --light:#fdf8f8;--border:#e8d5d7;--text:#2a0a0e;--muted:#8b6068;
     --green:#1e7d5a;--red:#c0392b;--white:#ffffff;--radius:6px;
-    --shadow:0 2px 10px rgba(26,39,68,.10);
+    --shadow:0 2px 10px rgba(107,15,26,.12);
   }
   *,*::before,*::after{box-sizing:border-box;margin:0;padding:0}
   body{font-family:'Segoe UI',system-ui,sans-serif;background:var(--light);color:var(--text);min-height:100vh}
@@ -80,8 +81,8 @@
 </head>
 <body>
 <header>
-  <div class="logo">EDU</div>
-  <div><h1>Seat Plan Generator</h1><p>East Delta University — Examination Division</p></div>
+  <img src="edu-logo.png" alt="EDU" class="logo" style="width:48px;height:48px;border-radius:8px;object-fit:contain;background:var(--white);padding:2px">
+  <div><h1>Seat Plan Generator</h1><p>East Delta University — Examination Committee (Regular and Evening Programs)</p></div>
 </header>
 <div class="app">
   <aside class="sidebar">
@@ -186,14 +187,15 @@ function renderRooms() {
       ${r.custom==='n201'?`<div style="margin-top:6px;font-size:10px;color:var(--gold);font-weight:600">⚠ N201 custom layout [4,11,11,4] = 30 seats</div>`:''}
     </div>`).join('');
 
-  html += `<div style="display:flex;gap:6px;margin-top:4px">
-    <select id="presetPicker" style="flex:1;padding:6px 8px;border:1px solid var(--border);border-radius:var(--radius);font-size:12px;background:var(--white)">
-      <option value="">— Add preset room —</option>
-      ${available.map(p=>`<option value="${p.id}">${p.id} (${p.building}, ${p.rows}×${p.cols})</option>`).join('')}
-    </select>
-    <button onclick="addPresetRoom()" style="padding:6px 12px;background:var(--navy);color:var(--white);border:none;border-radius:var(--radius);font-size:12px;cursor:pointer;white-space:nowrap">Add</button>
+  html += `<div style="margin-top:8px">
+    <div style="font-size:10px;color:var(--muted);font-weight:600;margin-bottom:4px">Add preset rooms (click to toggle):</div>
+    <div style="display:flex;flex-wrap:wrap;gap:5px;margin-bottom:6px">
+      ${available.map(p=>`<button onclick="togglePreset('${p.id}')" id="preset-btn-${p.id}"
+        style="padding:4px 8px;font-size:11px;border:1px solid var(--border);border-radius:12px;background:var(--white);color:var(--text);cursor:pointer;transition:all .15s"
+        >${p.id} <span style="color:var(--muted)">${p.rows}×${p.cols}</span></button>`).join('')}
+    </div>
+    <button onclick="addSelectedPresets()" style="width:100%;padding:6px 12px;background:var(--navy);color:var(--white);border:none;border-radius:var(--radius);font-size:12px;cursor:pointer;font-weight:600">+ Add Selected Rooms</button>
   </div>`;
-
   document.getElementById('roomList').innerHTML = html;
 }
 
@@ -210,11 +212,28 @@ function renderCourses() {
 
 function addRoom()   { rooms.push({id:'Room'+(rooms.length+1),rows:7,cols:4,building:'main'}); renderRooms(); }
 function delRoom(i)  { rooms.splice(i,1); renderRooms(); }
-function addPresetRoom() {
-  const sel = document.getElementById('presetPicker');
-  const p   = ROOM_PRESETS.find(x => x.id === sel.value);
-  if (!p) return;
-  rooms.push({...p});
+let selectedPresets = new Set();
+function togglePreset(id) {
+  const btn = document.getElementById('preset-btn-'+id);
+  if (selectedPresets.has(id)) {
+    selectedPresets.delete(id);
+    btn.style.background = 'var(--white)';
+    btn.style.borderColor = 'var(--border)';
+    btn.style.color = 'var(--text)';
+  } else {
+    selectedPresets.add(id);
+    btn.style.background = 'var(--navy)';
+    btn.style.borderColor = 'var(--navy)';
+    btn.style.color = '#fff';
+  }
+}
+function addSelectedPresets() {
+  const usedIds = rooms.map(r => r.id);
+  for (const id of selectedPresets) {
+    const p = ROOM_PRESETS.find(x => x.id === id);
+    if (p && !usedIds.includes(p.id)) rooms.push({...p});
+  }
+  selectedPresets.clear();
   renderRooms();
 }
 function addCourse()     { courses.push({code:'',n:0}); renderCourses(); }
@@ -441,7 +460,7 @@ function generate() {
           table+=course?`<td class="${cls}">${course}</td>`:`<td class="empty">—</td>`;
         }
         if(hasR)table+=isR1?`<td class="${colourMap[ovf.right.course]||''}" style="border:2px dashed #c8972a;font-size:10px;font-weight:700;vertical-align:middle">⊕ ${ovf.right.course}<br><small>+${ovf.right.count}</small></td>`:emptyCell;
-        table+=`<td style="border-left:2px solid #c8972a;background:#fffbf0;min-width:110px"></td>`;
+        if(isR1){const rowspan=room.custom==='n201'?Math.max(...n201H):room.rows;table+=`<td rowspan="${rowspan}" style="border-left:2px solid #c8972a;background:#fffbf0;min-width:110px;vertical-align:top"></td>`;}
         table+=`</tr>`;
       }
       table+=`</tbody></table>`;
@@ -519,19 +538,19 @@ async function exportDocx(){
       if(ovf.right)parts.push(`⊕ ${ovf.right.course} +${ovf.right.count} (top-right)`);
       children.push(new Paragraph({children:[new TextRun({text:'Overflow: '+parts.join('   |   '),size:20,color:'C8972A',bold:true,italics:true})],spacing:{before:40,after:60}}));
     }
-    const hdrCells=[new TableCell({children:[new Paragraph({children:[new TextRun({text:'Row',bold:true,size:20})],alignment:AlignmentType.CENTER})],shading:{fill:'F0F3F8'},borders:{top:border,bottom:border,left:border,right:border},width:{size:8,type:WidthType.PERCENTAGE}})];
-    for(let c=1;c<=room.cols;c++)hdrCells.push(new TableCell({children:[new Paragraph({children:[new TextRun({text:`Col ${c}`,bold:true,size:20})],alignment:AlignmentType.CENTER})],shading:{fill:'F0F3F8'},borders:{top:border,bottom:border,left:border,right:border},width:{size:Math.floor(72/room.cols),type:WidthType.PERCENTAGE}}));
-    hdrCells.push(new TableCell({children:[new Paragraph({children:[new TextRun({text:'Invigilator',bold:true,size:20,color:'1A2744'})],alignment:AlignmentType.CENTER})],shading:{fill:'F0F3F8'},borders:{top:border,bottom:border,left:goldBorder,right:border},width:{size:20,type:WidthType.PERCENTAGE}}));
+    const hdrCells=[new TableCell({children:[new Paragraph({children:[new TextRun({text:'Row',bold:true,size:20})],alignment:AlignmentType.CENTER})],shading:{fill:'F0F3F8'},borders:{top:border,bottom:border,left:border,right:border},width:{size:10,type:WidthType.PERCENTAGE}})];
+    for(let c=1;c<=room.cols;c++)hdrCells.push(new TableCell({children:[new Paragraph({children:[new TextRun({text:`Col ${c}`,bold:true,size:20})],alignment:AlignmentType.CENTER})],shading:{fill:'F0F3F8'},borders:{top:border,bottom:border,left:border,right:border},width:{size:Math.floor(80/room.cols),type:WidthType.PERCENTAGE}}));
+    hdrCells.push(new TableCell({children:[new Paragraph({children:[new TextRun({text:'Invigilator',bold:true,size:20,color:'1A2744'})],alignment:AlignmentType.CENTER})],shading:{fill:'F0F3F8'},borders:{top:border,bottom:border,left:goldBorder,right:border},width:{size:22,type:WidthType.PERCENTAGE}}));
     const tableRows=[new TableRow({children:hdrCells,tableHeader:true})];
     for(let r=1;r<=room.rows;r++){
       if(room.custom==='n201'){const anyValid=[1,2,3,4].some(c=>r<=n201H[c-1]);if(!anyValid)continue;}
-      const cells=[new TableCell({children:[new Paragraph({children:[new TextRun({text:`R${r}`,size:20,color:'6B7591'})],alignment:AlignmentType.CENTER})],shading:{fill:'F8F9FC'},borders:{top:border,bottom:border,left:border,right:border},width:{size:8,type:WidthType.PERCENTAGE}})];
+      const cells=[new TableCell({children:[new Paragraph({children:[new TextRun({text:`R${r}`,size:20,color:'6B7591'})],alignment:AlignmentType.CENTER})],shading:{fill:'F8F9FC'},borders:{top:border,bottom:border,left:border,right:border},width:{size:10,type:WidthType.PERCENTAGE}})];
       for(let c=1;c<=room.cols;c++){
         const course=grid[`${r},${c}`]||'';
         const fill=course?colourMap[course]||'FFFFFF':'FFFFFF';
-        cells.push(new TableCell({children:[new Paragraph({children:[new TextRun({text:course,size:20,bold:!!course})],alignment:AlignmentType.CENTER})],shading:{fill,type:ShadingType.CLEAR},borders:{top:border,bottom:border,left:border,right:border},width:{size:Math.floor(72/room.cols),type:WidthType.PERCENTAGE}}));
+        cells.push(new TableCell({children:[new Paragraph({children:[new TextRun({text:course,size:20,bold:!!course})],alignment:AlignmentType.CENTER})],shading:{fill,type:ShadingType.CLEAR},borders:{top:border,bottom:border,left:border,right:border},width:{size:Math.floor(80/room.cols),type:WidthType.PERCENTAGE}}));
       }
-      cells.push(new TableCell({children:[new Paragraph({children:[new TextRun({text:'',size:20})],alignment:AlignmentType.LEFT})],shading:{fill:'FFFBF0'},borders:{top:border,bottom:border,left:goldBorder,right:border},width:{size:20,type:WidthType.PERCENTAGE}}));
+      cells.push(new TableCell({children:[new Paragraph({children:[new TextRun({text:'',size:20})],alignment:AlignmentType.LEFT})],shading:{fill:'FFFBF0'},borders:{top:border,bottom:border,left:goldBorder,right:border},width:{size:22,type:WidthType.PERCENTAGE}}));
       tableRows.push(new TableRow({children:cells}));
     }
     children.push(new Table({rows:tableRows,width:{size:100,type:WidthType.PERCENTAGE}}));
