@@ -135,20 +135,8 @@ const ROOM_PRESETS = [
 ];
 
 // ── STATE ─────────────────────────────────────────────────────────
-let rooms = [
-  {id:'108',rows:7,cols:4,building:'main'},{id:'110',rows:7,cols:4,building:'main'},
-  {id:'111',rows:7,cols:4,building:'main'},{id:'114',rows:7,cols:4,building:'main'},
-  {id:'311',rows:7,cols:4,building:'main'},{id:'312',rows:7,cols:4,building:'main'},
-  {id:'Sem2',rows:8,cols:7,building:'main'},{id:'N-203',rows:6,cols:6,building:'novus'},
-  {id:'N-204',rows:6,cols:6,building:'novus'},
-];
-let courses = [
-  {code:'CSE 115',n:28},{code:'CSE 225',n:29},{code:'CSE 311.2',n:29},
-  {code:'CSE 411',n:9},{code:'CSE 435',n:13},{code:'EEE 203',n:33},
-  {code:'EEE 213.1',n:25},{code:'EEE 213.2',n:15},{code:'EEE 311.1',n:22},
-  {code:'EEE 311.2',n:14},{code:'EEE 313',n:31},{code:'EEE 405',n:29},
-];
-
+let rooms = [];
+let courses = [];
 // ── RENDER SIDEBAR ────────────────────────────────────────────────
 function renderRooms() {
   selectedPresets.clear();
@@ -259,8 +247,8 @@ function getSubgrids(rows, cols, custom) {
 }
 
 // ── ALLOCATE ──────────────────────────────────────────────────────
-function allocate(rooms, courses) {
-  const OVERFLOW_MAX = 2;
+function allocate(rooms, courses, slotSortFn) {
+  const OVERFLOW_MAX = 3;
 
   // Build slots in round-robin room order
   function buildSlots() {
@@ -278,12 +266,13 @@ function allocate(rooms, courses) {
       rs.sort((a,b)=>b.cap-a.cap);
       slots.push(...rs);
     }
+    if(slotSortFn)slots.sort(slotSortFn);
     return slots;
   }
 
   const slots=buildSlots();
   const remaining={},courseRooms={},lastRoom={};
-  for(const c of courses){remaining[c.code]=c.n;courseRooms[c.code]=new Set();lastRoom[c.code]=null;}
+  for(const c of courses){remaining[c.code]=c.n;courseRooms[c.code]=new Set();lastRoom[c.code]=null;c._unplaced=0;}
   const pending={};
 
   // Pass 1: round-robin assignment
@@ -292,7 +281,10 @@ function allocate(rooms, courses) {
     if(!eligible.length)continue;
     const best=eligible.reduce((b,c)=>{
       const need=remaining[c.code],fill=Math.min(need,slot.cap),rem=need-fill;
-      const sc=rem===0?[0,slot.cap-fill]:rem<=OVERFLOW_MAX?[1,rem]:[2,-need];
+      const existingSlack=slots.filter(s=>s.course===c.code).reduce((sum,s)=>sum+(s.cap-s.filled),0);
+      const canAbsorb=existingSlack>=rem;
+      const oversized=slot.cap>=need*2&&need>0;
+      const sc=rem===0?[0,slot.cap-fill]:rem<=OVERFLOW_MAX&&canAbsorb?[1,rem]:[2,-need+(oversized?1:0)];
       if(!b)return{c,sc};
       if(sc[0]<b.sc[0]||(sc[0]===b.sc[0]&&sc[1]<b.sc[1]))return{c,sc};
       return b;
@@ -300,14 +292,13 @@ function allocate(rooms, courses) {
     const code=best.c.code,fill=Math.min(remaining[code],slot.cap),rem=remaining[code]-fill;
     slot.course=code;slot.filled=fill;
     courseRooms[code].add(slot.roomId);lastRoom[code]=slot.roomId;remaining[code]=rem;
-    if(rem>0&&rem<=OVERFLOW_MAX){pending[code]=(pending[code]||0)+rem;remaining[code]=0;}
+    if(rem>0&&rem<=OVERFLOW_MAX){pending[code]=(pending[code]||0)+rem;remaining[code]=0;courseRooms[code].add('__pending__');}
   }
-  for(const c of courses){
+    for(const c of courses){
     const need=remaining[c.code];
-    if(need>0&&need<=OVERFLOW_MAX){pending[c.code]=(pending[c.code]||0)+need;remaining[c.code]=0;}
+    if(need>0&&need<=OVERFLOW_MAX&&!courseRooms[c.code].has('__pending__')&&lastRoom[c.code]){pending[c.code]=(pending[c.code]||0)+need;remaining[c.code]=0;}
     else if(need>0)c._unplaced=need;
   }
-
   // Pass 2: absorb pending into slot slack
   const rawOverflows=[];
   for(const[code,cnt]of Object.entries(pending)){
@@ -329,27 +320,70 @@ function allocate(rooms, courses) {
     const sgs=getSubgrids(rm.rows,rm.cols,rm.custom);
     for(let i=0;i<slot.filled;i++){const[r,c]=sgs[slot.sgIdx][i];gridMap[slot.roomId][`${r},${c}`]=slot.course;}
   }
-  const corners={};
-  for(const room of rooms)corners[room.id]={left:gridMap[room.id]['1,1']||null,right:gridMap[room.id][`1,${room.cols}`]||null};
+    const corners={};
+  for(const room of rooms)corners[room.id]={
+    left:gridMap[room.id]['1,1']||null,
+    right:gridMap[room.id][`1,${room.cols}`]||null,
+  };
 
   // Distribute overflows to room corner cells (max 2 per room)
-  const roomOvf={};
-  for(const room of rooms)roomOvf[room.id]={left:null,right:null};
-  function tryPlace(ov,roomId){
-    const o=roomOvf[roomId],c=corners[roomId];
-    if(!o.right&&c.right!==ov.course){o.right=ov;return true;}
-    if(!o.left&&c.left!==ov.course){o.left=ov;return true;}
-    return false;
-  }
-  const unresolved=[];
+    const roomOvf={};
+    for(const room of rooms)roomOvf[room.id]={left:null,right:null};
+    // ── Pass 3: place overflow into unassigned slots ──────────────────
+  const stillRaw=[];
   for(const ov of rawOverflows){
-    let placed=false;
-    if(ov.preferredRoom&&tryPlace(ov,ov.preferredRoom))placed=true;
-    if(!placed)for(const room of rooms){if(room.id===ov.preferredRoom)continue;if(slots.some(s=>s.roomId===room.id&&s.course===ov.course))if(tryPlace(ov,room.id)){placed=true;break;}}
-    if(!placed)for(const room of rooms)if(tryPlace(ov,room.id)){placed=true;break;}
-    if(!placed)unresolved.push(ov);
+    let count=ov.count;
+    const unassigned=slots.filter(s=>s.course===null&&!courseRooms[ov.course].has(s.roomId));
+    for(const slot of unassigned){
+      if(count<=0)break;
+      const fill=Math.min(count,slot.cap);
+      slot.course=ov.course;
+      slot.filled=fill;
+      courseRooms[ov.course].add(slot.roomId);
+      // Update gridMap so corner adjacency check sees new positions
+      const rm=rooms.find(r=>r.id===slot.roomId);
+      const sgs=getSubgrids(rm.rows,rm.cols,rm.custom);
+      for(let i=0;i<fill;i++){
+        const[r,c]=sgs[slot.sgIdx][i];
+        gridMap[slot.roomId][`${r},${c}`]=ov.course;
+      }
+      count-=fill;
+    }
+    if(count>0)stillRaw.push({course:ov.course,count,preferredRoom:ov.preferredRoom});
   }
 
+  // Recompute corners after Pass 3 (gridMap may have changed)
+  for(const room of rooms)corners[room.id]={
+    left:gridMap[room.id]['1,1']||null,
+    right:gridMap[room.id][`1,${room.cols}`]||null,
+  };
+
+  // ── Corner placement (max 2 per room, top-left and top-right only) ─
+  function tryPlace(ov,roomId){
+    const o=roomOvf[roomId],c=corners[roomId];
+    const g=gridMap[roomId];
+    const C=rooms.find(r=>r.id===roomId).cols;
+    const leftN=[g['1,2'],g['2,1'],g['2,2']];
+    const rightN=[g[`1,${C-1}`],g[`2,${C}`],g[`2,${C-1}`]];
+    const leftSafe=c.left!==ov.course&&!leftN.includes(ov.course)&&(!o.right||o.right.course!==ov.course);
+    const rightSafe=c.right!==ov.course&&!rightN.includes(ov.course)&&(!o.left||o.left.course!==ov.course);
+    if(!o.right&&rightSafe){o.right=ov;return true;}
+    if(!o.left&&leftSafe){o.left=ov;return true;}
+    return false;
+  }
+  const roomsBySlack=[...rooms].sort((a,b)=>{
+    const slackA=slots.filter(s=>s.roomId===a.id).reduce((sum,s)=>sum+(s.cap-s.filled),0);
+    const slackB=slots.filter(s=>s.roomId===b.id).reduce((sum,s)=>sum+(s.cap-s.filled),0);
+    return slackB-slackA;
+  });
+    const unresolved=[];
+  for(const ov of stillRaw){
+    let placed=false;
+    if(ov.preferredRoom&&tryPlace(ov,ov.preferredRoom))placed=true;
+    if(!placed)for(const room of roomsBySlack){if(room.id===ov.preferredRoom)continue;if(slots.some(s=>s.roomId===room.id&&s.course===ov.course))if(tryPlace(ov,room.id)){placed=true;break;}}
+    
+    if(!placed)unresolved.push(ov);
+  }
   const roomAllocations={};
   for(const room of rooms)roomAllocations[room.id]=[];
   for(const slot of slots)if(slot.course)roomAllocations[slot.roomId].push({sgIdx:slot.sgIdx,course:slot.course,filled:slot.filled,cap:slot.cap,seats:slot.seats});
@@ -359,9 +393,56 @@ function allocate(rooms, courses) {
   for(const room of rooms)for(const ov of Object.values(roomOvf[room.id]))if(ov)courseTotals[ov.course]=(courseTotals[ov.course]||0)+ov.count;
 
   const errors=courses.filter(c=>c._unplaced>0).map(c=>`${c.code}: ${c._unplaced} student(s) could not be placed — add a row to a room.`);
-  if(unresolved.length)errors.push(`${unresolved.reduce((s,o)=>s+o.count,0)} overflow student(s) have no cell — add 1 row to any room.`);
+    if(unresolved.length){
+    for(const ov of unresolved){
+      const ovRooms=[...new Set(slots.filter(s=>s.course===ov.course).map(s=>s.roomId))].join(', ');
+      errors.push(`OVERFLOW — ${ov.course}: ${ov.count} student(s) could not be seated. Add manually to any of these rooms where this course already has seats: ${ovRooms}`);
+    }
+  }
 
-  return{roomAllocations,roomOvf,courseTotals,errors};
+    return{roomAllocations,roomOvf,courseTotals,errors,placed:Object.values(courseTotals).reduce((s,v)=>s+v,0)};
+}
+
+// ── BEST ALLOCATE ─────────────────────────────────────────────────
+function bestAllocate(rooms, courses) {
+  const totalStudents=courses.reduce((s,c)=>s+c.n,0);
+
+  // Slot orderings
+  const slotFns=[
+    undefined,
+    (a,b)=>a.cap-b.cap,
+    (a,b)=>b.cap-a.cap||a.roomId.localeCompare(b.roomId),
+    (a,b)=>a.roomId.localeCompare(b.roomId)||b.cap-a.cap,
+    (a,b)=>a.sgIdx-b.sgIdx,
+    (a,b)=>b.sgIdx-a.sgIdx,
+  ];
+
+  // Course orderings
+  function courseOrders(cs){
+    const desc=[...cs].sort((a,b)=>b.n-a.n);
+    const asc=[...cs].sort((a,b)=>a.n-b.n);
+    const alt=[];
+    let lo=0,hi=desc.length-1;
+    while(lo<=hi){if(lo===hi){alt.push(desc[lo++]);}else{alt.push(desc[lo++]);alt.push(desc[hi--]);}}
+    return [cs, desc, asc, alt];
+  }
+
+  const courseVariants=courseOrders(courses);
+
+  let best=null;
+  outer:
+  for(const co of courseVariants){
+    for(const fn of slotFns){
+      const cloned=co.map(c=>({...c}));
+      const result=allocate(rooms,cloned,fn);
+      if(!best||result.placed>best.placed||(result.placed===best.placed&&result.errors.length<best.errors.length)){
+        best=result;
+        if(best.placed===totalStudents)break outer;
+      }
+    }
+  }
+  for(const c of courses)c._unplaced=0;
+  return best;
 }
 
 // ── COLOURS ───────────────────────────────────────────────────────
@@ -379,12 +460,58 @@ function generate() {
   // SG capacity check
   const totalSGCap=rooms.reduce((s,r)=>{const sgs=getSubgrids(r.rows,r.cols,r.custom);return s+sgs.reduce((a,sg)=>a+sg.length,0);},0);
   const totalCap=rooms.reduce((s,r)=>s+(r.custom==='n201'?30:r.rows*r.cols),0);
-  if(totalSGCap<totalStudents){
-    document.getElementById('output').innerHTML=`<div class="error-box"><strong>⛔ Infeasible: Not enough usable seats under the no-adjacent rule.</strong><br>Students: <strong>${totalStudents}</strong> &nbsp;|&nbsp; Usable seats: <strong>${totalSGCap}</strong> &nbsp;|&nbsp; Shortfall: <strong>${totalStudents-totalSGCap}</strong><br>Add more rooms or reduce student count. (Raw capacity: ${totalCap})</div>`;
+    // Per-course max placeable check
+  const maxPlaceableErrors=[];
+  for(const c of validCourses){
+    const maxForCourse=rooms.reduce((sum,r)=>{
+      const sgs=getSubgrids(r.rows,r.cols,r.custom);
+      return sum+Math.max(...sgs.map(sg=>sg.length));
+    },0);
+    if(c.n>maxForCourse){
+      const roomsNeeded=Math.ceil(c.n/Math.max(...rooms.map(r=>Math.max(...getSubgrids(r.rows,r.cols,r.custom).map(sg=>sg.length)))));
+      maxPlaceableErrors.push(`${c.code} has ${c.n} students but maximum placeable across current rooms is ${maxForCourse}. Add ${roomsNeeded-rooms.length} more room(s).`);
+    }
+  }
+  if(maxPlaceableErrors.length){
+    document.getElementById('output').innerHTML=`<div class="error-box"><strong>⛔ Course too large for available rooms under the no-adjacent rule:</strong><br>${maxPlaceableErrors.join('<br>')}</div>`;
     return;
   }
 
-  const{roomAllocations,roomOvf,courseTotals,errors}=allocate(rooms,validCourses);
+  const ovfBuffer=rooms.length*2;
+  if(totalStudents>totalSGCap+ovfBuffer){
+    document.getElementById('output').innerHTML=`<div class="error-box"><strong>⛔ Infeasible: Not enough usable seats under the no-adjacent rule.</strong><br>Students: <strong>${totalStudents}</strong> &nbsp;|&nbsp; Usable seats: <strong>${totalSGCap}</strong> (+ up to ${ovfBuffer} overflow) &nbsp;|&nbsp; Shortfall: <strong>${totalStudents-totalSGCap-ovfBuffer}</strong><br>Add more rooms or reduce student count. (Raw capacity: ${totalCap})</div>`;
+    return;
+  }
+
+  const{roomAllocations,roomOvf,courseTotals,errors}=bestAllocate(rooms,validCourses);
+
+// Post-generation adjacency validator
+const adjErrors=[];
+for(const room of rooms){
+  const sgs=getSubgrids(room.rows,room.cols,room.custom);
+  const grid={};
+  for(const alloc of(roomAllocations[room.id]||[])){
+    const pos=sgs[alloc.sgIdx];
+    for(let i=0;i<alloc.filled;i++){const[r,c]=pos[i];grid[`${r},${c}`]=alloc.course;}
+  }
+  const ovf=roomOvf[room.id]||{};
+    if(ovf.left)grid['1,1']=ovf.left.course;
+  if(ovf.right)grid[`1,${room.cols}`]=ovf.right.course;
+  const dirs=[[-1,-1],[-1,0],[-1,1],[0,-1],[0,1],[1,-1],[1,0],[1,1]];
+  const seen=new Set();
+  for(const key of Object.keys(grid)){
+    const[r,c]=key.split(',').map(Number);
+    for(const[dr,dc]of dirs){
+      const nk=`${r+dr},${c+dc}`;
+      const pairKey=[key,nk].sort().join('|');
+      if(grid[nk]&&grid[nk]===grid[key]&&!seen.has(pairKey)){
+        seen.add(pairKey);
+        adjErrors.push(`⛔ Adjacency violation in ${room.id}: [R${r}C${c}] and [R${r+dr}C${c+dc}] both have ${grid[key]}`);
+      }
+    }
+  }
+}
+if(adjErrors.length)errors.unshift(...adjErrors);
   const placed=Object.values(courseTotals).reduce((s,v)=>s+v,0);
   const colourMap={};
   validCourses.forEach((c,i)=>colourMap[c.code]=COLOURS[i%COLOURS.length]);
@@ -403,8 +530,14 @@ function generate() {
     }
   }
 
-  let html='';
-  if(errors.length)html+=`<div class="error-box"><strong>⚠ Warning:</strong><br>${errors.join('<br>')}</div>`;
+    let html='';
+  const hardErrors=errors.filter(e=>!e.startsWith('OVERFLOW —'));
+  const ovfNotes=errors.filter(e=>e.startsWith('OVERFLOW —'));
+  if(hardErrors.length)html+=`<div class="error-box"><strong>⚠ Warning:</strong><br>${hardErrors.join('<br>')}</div>`;
+  if(ovfNotes.length)html+=`<div style="background:#fffbea;border:1px solid #f0c040;border-radius:var(--radius);padding:14px 18px;margin-bottom:16px;font-size:20px;color:#7a5500">
+    <strong style="font-size:15px">📋 Manual Overflow Required</strong><br><br>
+    ${ovfNotes.map(n=>n.replace('OVERFLOW — ','')).join('<br><br>')}
+  </div>`;
 
   html+=`<div class="status-bar">
     <div class="stat"><span class="stat-label">Total Students</span><span class="stat-value">${totalStudents}</span></div>
@@ -437,7 +570,7 @@ function generate() {
       for(const alloc of allocs){const pos=sgs[alloc.sgIdx];for(let i=0;i<alloc.filled;i++){const[r,c]=pos[i];grid[`${r},${c}`]=alloc.course;}}
 
       // Build table
-      const hasL=!!ovf.left,hasR=!!ovf.right;
+            const hasL=!!ovf.left,hasR=!!ovf.right;
       const emptyCell=`<td style="border:1px dashed #e0c88a;background:#fffbf0;min-width:80px"></td>`;
 
       let table=`<table class="seat-grid"><thead><tr>`;
@@ -452,7 +585,7 @@ function generate() {
         if(room.custom==='n201'){const anyValid=[1,2,3,4].some(c=>r<=n201H[c-1]);if(!anyValid)continue;}
         const isR1=r===1;
         table+=`<tr>`;
-        if(hasL)table+=isR1?`<td class="${colourMap[ovf.left.course]||''}" style="border:2px dashed #c8972a;font-size:10px;font-weight:700;vertical-align:middle">⊕ ${ovf.left.course}<br><small>+${ovf.left.count}</small></td>`:emptyCell;
+                if(hasL)table+=isR1?`<td class="${colourMap[ovf.left.course]||''}" style="border:2px dashed #c8972a;font-size:10px;font-weight:700;vertical-align:middle">⊕ ${ovf.left.course}<br><small>+${ovf.left.count}</small></td>`:emptyCell;
         table+=`<td class="row-label">R${r}</td>`;
         for(let c=1;c<=room.cols;c++){
           if(room.custom==='n201'&&r>n201H[c-1]){table+=`<td class="invalid-cell"></td>`;continue;}
@@ -468,7 +601,7 @@ function generate() {
 
       const legendCourses=[...new Set(allocs.map(a=>a.course))];
       const legend=legendCourses.map(c=>{const n=allocs.filter(a=>a.course===c).reduce((s,a)=>s+a.filled,0);return`<span class="legend-chip ${colourMap[c]||''}">${c} = ${n}</span>`;}).join('');
-      const ovfLegend=[ovf.left,ovf.right].filter(Boolean).map(o=>`<span class="legend-chip" style="border:2px dashed #c8972a;color:#c8972a">⊕ ${o.course} +${o.count}</span>`).join('');
+            const ovfLegend=[ovf.left,ovf.right].filter(Boolean).map(o=>`<span class="legend-chip" style="border:2px dashed #c8972a;color:#c8972a">⊕ ${o.course} +${o.count}</span>`).join('');
 
       html+=`<div class="room-card">
         <div class="room-card-header">
@@ -514,7 +647,7 @@ async function exportDocx(){
   const time=document.getElementById('examTime').value.trim();
   const validCourses=courses.filter(c=>c.code&&c.n>0);
   if(!validCourses.length){alert('Generate a seat plan first.');return;}
-  const{roomAllocations,roomOvf,courseTotals}=allocate(rooms,validCourses);
+  const{roomAllocations,roomOvf,courseTotals}=bestAllocate(rooms,validCourses);
   const colourMap={};
   validCourses.forEach((c,i)=>colourMap[c.code]=['E8F4FD','EAFAF1','FEF9E7','FDF2F8','F0F3FF','FFF5F5','F0FAF5','FFFBF0','F5F0FF','F0F9FF','FFF0F6','F0FFF4'][i%12]);
   const border={style:BorderStyle.SINGLE,size:4,color:'DCE2EC'};
@@ -533,7 +666,7 @@ async function exportDocx(){
     const grid={};
     for(const alloc of allocs){const pos=sgs[alloc.sgIdx];for(let i=0;i<alloc.filled;i++){const[r,c]=pos[i];grid[`${r},${c}`]=alloc.course;}}
     children.push(new Paragraph({children:[new TextRun({text:`${room.id}   —   ${studentsHere} students  |  ${room.rows}×${room.cols}`,bold:true,size:24,color:'243058'})],spacing:{before:280,after:80}}));
-    if(ovf.left||ovf.right){
+        if(ovf.left||ovf.right){
       const parts=[];
       if(ovf.left)parts.push(`⊕ ${ovf.left.course} +${ovf.left.count} (top-left)`);
       if(ovf.right)parts.push(`⊕ ${ovf.right.course} +${ovf.right.count} (top-right)`);
@@ -543,15 +676,15 @@ async function exportDocx(){
     for(let c=1;c<=room.cols;c++)hdrCells.push(new TableCell({children:[new Paragraph({children:[new TextRun({text:`Col ${c}`,bold:true,size:20})],alignment:AlignmentType.CENTER})],shading:{fill:'F0F3F8'},borders:{top:border,bottom:border,left:border,right:border},width:{size:Math.floor(80/room.cols),type:WidthType.PERCENTAGE}}));
     hdrCells.push(new TableCell({children:[new Paragraph({children:[new TextRun({text:'Invigilator',bold:true,size:20,color:'1A2744'})],alignment:AlignmentType.CENTER})],shading:{fill:'F0F3F8'},borders:{top:border,bottom:border,left:goldBorder,right:border},width:{size:22,type:WidthType.PERCENTAGE}}));
     const tableRows=[new TableRow({children:hdrCells,tableHeader:true})];
-    for(let r=1;r<=room.rows;r++){
+        for(let r=1;r<=room.rows;r++){
       if(room.custom==='n201'){const anyValid=[1,2,3,4].some(c=>r<=n201H[c-1]);if(!anyValid)continue;}
-      const cells=[new TableCell({children:[new Paragraph({children:[new TextRun({text:`R${r}`,size:20,color:'6B7591'})],alignment:AlignmentType.CENTER})],shading:{fill:'F8F9FC'},borders:{top:border,bottom:border,left:border,right:border},width:{size:10,type:WidthType.PERCENTAGE}})];
+      const cells=[new TableCell({children:[new Paragraph({children:[new TextRun({text:`R${r}`,size:22,color:'6B7591'})],alignment:AlignmentType.CENTER})],shading:{fill:'F8F9FC'},borders:{top:border,bottom:border,left:border,right:border},width:{size:10,type:WidthType.PERCENTAGE},margins:{top:120,bottom:120,left:100,right:100}})];
       for(let c=1;c<=room.cols;c++){
         const course=grid[`${r},${c}`]||'';
         const fill=course?colourMap[course]||'FFFFFF':'FFFFFF';
-        cells.push(new TableCell({children:[new Paragraph({children:[new TextRun({text:course,size:20,bold:!!course})],alignment:AlignmentType.CENTER})],shading:{fill,type:ShadingType.CLEAR},borders:{top:border,bottom:border,left:border,right:border},width:{size:Math.floor(80/room.cols),type:WidthType.PERCENTAGE}}));
+        cells.push(new TableCell({children:[new Paragraph({children:[new TextRun({text:course,size:24,bold:!!course})],alignment:AlignmentType.CENTER})],shading:{fill,type:ShadingType.CLEAR},borders:{top:border,bottom:border,left:border,right:border},width:{size:Math.floor(80/room.cols),type:WidthType.PERCENTAGE},margins:{top:120,bottom:120,left:100,right:100}}));
       }
-      cells.push(new TableCell({children:[new Paragraph({children:[new TextRun({text:'',size:20})],alignment:AlignmentType.LEFT})],shading:{fill:'FFFBF0'},borders:{top:border,bottom:border,left:goldBorder,right:border},width:{size:22,type:WidthType.PERCENTAGE}}));
+      cells.push(new TableCell({children:[new Paragraph({children:[new TextRun({text:'',size:24})],alignment:AlignmentType.LEFT})],shading:{fill:'FFFBF0'},borders:{top:border,bottom:border,left:goldBorder,right:border},width:{size:22,type:WidthType.PERCENTAGE},margins:{top:120,bottom:120,left:100,right:100}}));
       tableRows.push(new TableRow({children:cells}));
     }
     children.push(new Table({rows:tableRows,width:{size:100,type:WidthType.PERCENTAGE}}));
