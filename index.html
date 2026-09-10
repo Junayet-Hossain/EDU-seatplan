@@ -119,6 +119,10 @@
     </div>
   </main>
 </div>
+<footer style="background:var(--navy);color:#a8b4d0;text-align:center;padding:10px 20px;font-size:11px;border-top:2px solid var(--gold)">
+  Copyright © A. S. M. Junayet Hossain, Lecturer, EEE, SoSET, East Delta University &nbsp;|&nbsp;
+  <a href="mailto:junayet.h@eastdelta.edu.bd" style="color:var(--gold2);text-decoration:none">junayet.h@eastdelta.edu.bd</a>
+</footer>
 <script>
 // ── PRESETS ───────────────────────────────────────────────────────
 const ROOM_PRESETS = [
@@ -551,10 +555,11 @@ if(adjErrors.length)errors.unshift(...adjErrors);
   html+=`<div style="background:var(--navy);color:var(--white);border-radius:var(--radius) var(--radius) 0 0;padding:14px 20px"><h2 style="font-size:16px;font-weight:700">${name}</h2><p style="font-size:12px;color:#a8b4d0;margin-top:3px">Seat Plan &nbsp;|&nbsp; ${date} &nbsp;|&nbsp; ${time}</p></div>`;
 
   const n201H=[4,11,11,4];
-  const buildings=[...new Set(rooms.map(r=>r.building))];
+    const buildings=[...new Set(rooms.map(r=>r.building))];
 
   for(const bld of buildings){
-    const bldRooms=rooms.filter(r=>r.building===bld);
+    const bldRooms=rooms.filter(r=>r.building===bld).sort((a,b)=>a.id.localeCompare(b.id,undefined,{numeric:true,sensitivity:'base'}));
+
     html+=`<div><div class="building-label">${bld==='novus'?'🏢 Novus Building':'🏛 Main Building'}</div>`;
 
     for(const room of bldRooms){
