@@ -452,6 +452,16 @@ function bestAllocate(rooms, courses) {
 // ── COLOURS ───────────────────────────────────────────────────────
 const COLOURS=['c0','c1','c2','c3','c4','c5','c6','c7','c8','c9','c10','c11','c12'];
 
+// ── MANUAL CORNER STATE ───────────────────────────────────────────
+let _manualCorners={};      // {roomId: {left: courseCode|null, right: courseCode|null}}
+let _unresolvedOvf=[];      // [{course, count, rooms:[]}]  — set after generate
+let _lastColourMap={};      // preserved for summary rebuild
+let _lastValidCourses=[];   // preserved for summary rebuild
+let _lastRooms=[];          // preserved for summary rebuild
+let _lastRoomAllocations={}; // preserved for summary rebuild
+let _lastRoomOvf={};        // preserved for summary rebuild
+let _lastCourseTotals={};   // preserved for summary rebuild
+
 // ── GENERATE ──────────────────────────────────────────────────────
 function generate() {
   const name=document.getElementById('examName').value.trim();
@@ -517,9 +527,32 @@ for(const room of rooms){
 }
 if(adjErrors.length)errors.unshift(...adjErrors);
   const placed=Object.values(courseTotals).reduce((s,v)=>s+v,0);
-  const colourMap={};
+  const unplacedCount=validCourses.reduce((s,c)=>s+(c._unplaced||0),0);
+
+    const colourMap={};
   validCourses.forEach((c,i)=>colourMap[c.code]=COLOURS[i%COLOURS.length]);
 
+  const hardErrors=errors.filter(e=>!e.startsWith('OVERFLOW —'));
+  const ovfNotes=errors.filter(e=>e.startsWith('OVERFLOW —'));
+
+  // Capture state for manual corner interaction
+  _manualCorners={};
+  for(const room of rooms)_manualCorners[room.id]={left:null,right:null};
+  _lastColourMap=colourMap;
+  _lastValidCourses=validCourses;
+  _lastRooms=rooms;
+  _lastRoomAllocations=roomAllocations;
+  _lastRoomOvf=roomOvf;
+  _lastCourseTotals={...courseTotals};
+
+  // Parse unresolved overflow from ovfNotes
+    _unresolvedOvf=[];
+  for(const n of ovfNotes){
+    const m=n.match(/^OVERFLOW — (.+?): (\d+) student\(s\).*rooms where this course already has seats: (.+)$/);
+    if(!m)continue;
+    const course=m[1],total=parseInt(m[2]),ovfRooms=m[3].split(', ');
+    for(let i=0;i<total;i++)_unresolvedOvf.push({course,count:1,rooms:ovfRooms});
+  }
   const courseRoomMap={};
   for(const room of rooms){
     for(const alloc of(roomAllocations[room.id]||[])){
@@ -535,8 +568,6 @@ if(adjErrors.length)errors.unshift(...adjErrors);
   }
 
     let html='';
-  const hardErrors=errors.filter(e=>!e.startsWith('OVERFLOW —'));
-  const ovfNotes=errors.filter(e=>e.startsWith('OVERFLOW —'));
   if(hardErrors.length)html+=`<div class="error-box"><strong>⚠ Warning:</strong><br>${hardErrors.join('<br>')}</div>`;
   if(ovfNotes.length)html+=`<div style="background:#fffbea;border:1px solid #f0c040;border-radius:var(--radius);padding:14px 18px;margin-bottom:16px;font-size:20px;color:#7a5500">
     <strong style="font-size:15px">📋 Manual Overflow Required</strong><br><br>
@@ -574,15 +605,28 @@ if(adjErrors.length)errors.unshift(...adjErrors);
       const grid={};
       for(const alloc of allocs){const pos=sgs[alloc.sgIdx];for(let i=0;i<alloc.filled;i++){const[r,c]=pos[i];grid[`${r},${c}`]=alloc.course;}}
 
+            // Check if this room has unresolved overflow eligible for manual corner
+      const roomOvfCourses=_unresolvedOvf.filter(o=>o.rooms.includes(room.id));
+      const showManualL=roomOvfCourses.length>0&&!ovf.left;
+      const showManualR=roomOvfCourses.length>0&&!ovf.right;
+
       // Build table
-            const hasL=!!ovf.left,hasR=!!ovf.right;
+      const hasL=!!ovf.left,hasR=!!ovf.right;
+      const showL=hasL||showManualL,showR=hasR||showManualR;
       const emptyCell=`<td style="border:1px dashed #e0c88a;background:#fffbf0;min-width:80px"></td>`;
+      const greyCell=(side)=>`<td data-corner="${room.id}-${side}" style="background:#e8e8e8;border:2px dashed #aaa;min-width:90px;text-align:center;vertical-align:middle;padding:6px">
+        <select onchange="assignCorner('${room.id}','${side}',this.value)"
+          style="font-size:11px;width:100%;padding:2px;border:1px solid #ccc;border-radius:3px;background:#fff">
+          <option value="">— assign —</option>
+          ${roomOvfCourses.map(o=>`<option value="${o.course}">${o.course} (1 student${o.remaining>1?`, ${o.remaining} slots left`:''})</option>`).join('')}
+        </select>
+      </td>`;
 
       let table=`<table class="seat-grid"><thead><tr>`;
-      if(hasL)table+=`<th style="color:#c8972a;font-size:9px;border:2px dashed #c8972a;min-width:90px">← OVF</th>`;
+      if(showL)table+=`<th style="color:#c8972a;font-size:9px;border:2px dashed #c8972a;min-width:90px">← OVF</th>`;
       table+=`<th>Row</th>`;
       for(let c=1;c<=room.cols;c++)table+=`<th>Col ${c}</th>`;
-      if(hasR)table+=`<th style="color:#c8972a;font-size:9px;border:2px dashed #c8972a;min-width:90px">OVF →</th>`;
+      if(showR)table+=`<th style="color:#c8972a;font-size:9px;border:2px dashed #c8972a;min-width:90px">OVF →</th>`;
       table+=`<th style="background:#f0f3f8;color:#1a2744;border-left:2px solid #c8972a;min-width:110px">Invigilator</th>`;
       table+=`</tr></thead><tbody>`;
 
@@ -590,7 +634,7 @@ if(adjErrors.length)errors.unshift(...adjErrors);
         if(room.custom==='n201'){const anyValid=[1,2,3,4].some(c=>r<=n201H[c-1]);if(!anyValid)continue;}
         const isR1=r===1;
         table+=`<tr>`;
-                if(hasL)table+=isR1?`<td class="${colourMap[ovf.left.course]||''}" style="border:2px dashed #c8972a;font-size:10px;font-weight:700;vertical-align:middle">⊕ ${ovf.left.course}<br><small>+${ovf.left.count}</small></td>`:emptyCell;
+        if(showL)table+=isR1?(hasL?`<td class="${colourMap[ovf.left.course]||''}" style="border:2px dashed #c8972a;font-size:10px;font-weight:700;vertical-align:middle">⊕ ${ovf.left.course}<br><small>+${ovf.left.count}</small></td>`:greyCell('left')):emptyCell;
         table+=`<td class="row-label">R${r}</td>`;
         for(let c=1;c<=room.cols;c++){
           if(room.custom==='n201'&&r>n201H[c-1]){table+=`<td class="invalid-cell"></td>`;continue;}
@@ -598,7 +642,7 @@ if(adjErrors.length)errors.unshift(...adjErrors);
           const cls=course?colourMap[course]||'':'';
           table+=course?`<td class="${cls}">${course}</td>`:`<td class="empty">—</td>`;
         }
-        if(hasR)table+=isR1?`<td class="${colourMap[ovf.right.course]||''}" style="border:2px dashed #c8972a;font-size:10px;font-weight:700;vertical-align:middle">⊕ ${ovf.right.course}<br><small>+${ovf.right.count}</small></td>`:emptyCell;
+        if(showR)table+=isR1?(hasR?`<td class="${colourMap[ovf.right.course]||''}" style="border:2px dashed #c8972a;font-size:10px;font-weight:700;vertical-align:middle">⊕ ${ovf.right.course}<br><small>+${ovf.right.count}</small></td>`:greyCell('right')):emptyCell;
         if(isR1){const rowspan=room.custom==='n201'?Math.max(...n201H):room.rows;table+=`<td rowspan="${rowspan}" style="border-left:2px solid #c8972a;background:#fffbf0;min-width:110px;vertical-align:top"></td>`;}
         table+=`</tr>`;
       }
@@ -608,10 +652,10 @@ if(adjErrors.length)errors.unshift(...adjErrors);
       const legend=legendCourses.map(c=>{const n=allocs.filter(a=>a.course===c).reduce((s,a)=>s+a.filled,0);return`<span class="legend-chip ${colourMap[c]||''}">${c} = ${n}</span>`;}).join('');
             const ovfLegend=[ovf.left,ovf.right].filter(Boolean).map(o=>`<span class="legend-chip" style="border:2px dashed #c8972a;color:#c8972a">⊕ ${o.course} +${o.count}</span>`).join('');
 
-      html+=`<div class="room-card">
+            html+=`<div class="room-card">
         <div class="room-card-header">
           <span class="rname">${room.id}</span>
-          <span class="rmeta">${totalHere} students &nbsp;|&nbsp; ${cap-studentsHere} empty &nbsp;|&nbsp; ${room.rows}×${room.cols}${ovfCount?` &nbsp;|&nbsp; <span style="color:#e8b84b">+${ovfCount} overflow</span>`:''}</span>
+                    <span class="rmeta" data-roomcount="${room.id}" data-base="${totalHere}" data-cap="${cap}" data-regular="${studentsHere}" data-dim="${room.rows}×${room.cols}">${totalHere} students &nbsp;|&nbsp; ${cap-studentsHere} empty &nbsp;|&nbsp; ${room.rows}×${room.cols}${ovfCount?` &nbsp;|&nbsp; <span style="color:#e8b84b">+${ovfCount} overflow</span>`:''}</span>
         </div>
         <div class="room-card-body">${table}</div>
         <div class="room-legend">${legend}${ovfLegend}</div>
@@ -653,6 +697,11 @@ async function exportDocx(){
   const validCourses=courses.filter(c=>c.code&&c.n>0);
   if(!validCourses.length){alert('Generate a seat plan first.');return;}
   const{roomAllocations,roomOvf,courseTotals}=bestAllocate(rooms,validCourses);
+  // Merge manual corner assignments into courseTotals for export
+  const exportTotals={...courseTotals};
+  for(const[roomId,sides]of Object.entries(_manualCorners))
+    for(const[side,code]of Object.entries(sides))
+      if(code)exportTotals[code]=(exportTotals[code]||0)+1;
   const colourMap={};
   validCourses.forEach((c,i)=>colourMap[c.code]=['E8F4FD','EAFAF1','FEF9E7','FDF2F8','F0F3FF','FFF5F5','F0FAF5','FFFBF0','F5F0FF','F0F9FF','FFF0F6','F0FFF4'][i%12]);
   const border={style:BorderStyle.SINGLE,size:4,color:'DCE2EC'};
@@ -711,10 +760,13 @@ async function exportDocx(){
       let v=allocs.filter(a=>a.course===course.code).reduce((s,a)=>s+a.filled,0);
       if(ovf2.left&&ovf2.left.course===course.code)v+=ovf2.left.count;
       if(ovf2.right&&ovf2.right.course===course.code)v+=ovf2.right.count;
+      const mc=_manualCorners[room.id]||{};
+      if(mc.left===course.code)v+=1;
+      if(mc.right===course.code)v+=1;
       rColT[room.id]=(rColT[room.id]||0)+v;
       row.push(new TableCell({children:[new Paragraph({children:[new TextRun({text:v?String(v):'—',size:20,color:v?'000000':'CCCCCC'})],alignment:AlignmentType.CENTER})],borders:{top:border,bottom:border,left:border,right:border},width:{size:Math.floor(72/rooms.length),type:WidthType.PERCENTAGE}}));
     }
-    row.push(new TableCell({children:[new Paragraph({children:[new TextRun({text:String(courseTotals[course.code]||0),bold:true,size:20})],alignment:AlignmentType.CENTER})],borders:{top:border,bottom:border,left:border,right:border},width:{size:10,type:WidthType.PERCENTAGE}}));
+        row.push(new TableCell({children:[new Paragraph({children:[new TextRun({text:String(exportTotals[course.code]||0),bold:true,size:20})],alignment:AlignmentType.CENTER})],borders:{top:border,bottom:border,left:border,right:border},width:{size:10,type:WidthType.PERCENTAGE}}));
     sRows.push(new TableRow({children:row}));
   }
   let grand=0;
@@ -727,6 +779,162 @@ async function exportDocx(){
   const doc=new Document({sections:[{children}]});
   const blob=await Packer.toBlob(doc);
   const a=document.createElement('a');a.href=URL.createObjectURL(blob);a.download=`SeatPlan_${date.replace(/\./g,'_')}.docx`;a.click();
+}
+
+// ── MANUAL CORNER ASSIGNMENT ──────────────────────────────────────
+function assignCorner(roomId, side, courseCode){
+    const prev=_manualCorners[roomId][side];
+  _manualCorners[roomId][side]=courseCode||null;
+  const td=document.querySelector(`[data-corner="${roomId}-${side}"]`);
+  if(td){
+    if(!courseCode){
+      // Revert to grey dropdown
+      const roomOvfCourses=_getAvailableOvfForRoom(roomId);
+      td.className='';
+      td.style.cssText='background:#e8e8e8;border:2px dashed #aaa;min-width:90px;text-align:center;vertical-align:middle;padding:6px';
+      td.innerHTML=`<select onchange="assignCorner('${roomId}','${side}',this.value)"
+        style="font-size:11px;width:100%;padding:2px;border:1px solid #ccc;border-radius:3px;background:#fff">
+        <option value="">— assign —</option>
+        ${roomOvfCourses.map(o=>`<option value="${o.course}">${o.course} (1 student)</option>`).join('')}
+      </select>`;
+    } else {
+      const placed=_getPlacedCourses();
+      const placedSoFar=placed[courseCode]||0;
+      const chunks=_unresolvedOvf.filter(o=>o.course===courseCode);
+      const ovf=chunks[placedSoFar]||chunks[0];
+      const count=ovf?ovf.count:1;
+      const cls=_lastColourMap[courseCode]||'';
+      td.className=cls;
+      td.style.cssText='border:2px dashed #c8972a;font-size:10px;font-weight:700;vertical-align:middle;text-align:center;padding:10px 14px;min-width:90px;cursor:pointer';
+      td.innerHTML=`⊕ ${courseCode}<br><small>+1</small><br><span style="font-size:9px;color:#888;text-decoration:underline;cursor:pointer" onclick="assignCorner('${roomId}','${side}','')">undo</span>`;
+    }
+  }
+
+  // Sync all remaining dropdowns
+  _syncAllDropdowns();
+  rebuildSummary();
+}
+
+function _getPlacedCourses(){
+  // Returns map of courseCode -> number of chunks already placed
+  const placed={};
+  for(const sides of Object.values(_manualCorners))
+    for(const code of Object.values(sides))
+      if(code)placed[code]=(placed[code]||0)+1;
+  return placed;
+}
+
+function _getAvailableOvfForRoom(roomId){
+  const placed=_getPlacedCourses();
+  const courseCounts={};
+  for(const o of _unresolvedOvf)courseCounts[o.course]=(courseCounts[o.course]||0)+1;
+  const available=[];
+  const seen=new Set();
+  for(const o of _unresolvedOvf){
+    if(!o.rooms.includes(roomId))continue;
+    if(seen.has(o.course))continue;
+    const totalChunks=courseCounts[o.course]||0;
+    const placedChunks=placed[o.course]||0;
+    if(placedChunks<totalChunks){
+      available.push({course:o.course,count:1,rooms:o.rooms,remaining:totalChunks-placedChunks});
+      seen.add(o.course);
+    }
+  }
+  return available;
+}
+
+function _syncAllDropdowns(){
+  const placed=_getPlacedCourses();
+  // Find all active grey dropdowns and rebuild their options
+  document.querySelectorAll('[data-corner]').forEach(td=>{
+    const sel=td.querySelector('select');
+    if(!sel)return; // already assigned — skip
+    const parts=td.getAttribute('data-corner').split('-');
+    const side=parts.pop();
+    const roomId=parts.join('-');
+    const available=_getAvailableOvfForRoom(roomId);
+    const current=sel.value;
+    sel.innerHTML=`<option value="">— assign —</option>
+    ${available.map(o=>`<option value="${o.course}"${o.course===current?' selected':''}>${o.course} (1 student${o.remaining>1?`, ${o.remaining} slots left`:''})</option>`).join('')}`;
+    if(!available.length&&!current){
+      td.style.opacity='0.4';
+      sel.disabled=true;
+    } else {
+      td.style.opacity='1';
+      sel.disabled=false;
+    }
+  });
+}
+
+function rebuildSummary(){
+  // Merge algorithm courseTotals with manual corners
+  const totals={..._lastCourseTotals};
+  const roomMap={};
+
+  // Start from algorithm allocations
+  for(const room of _lastRooms){
+    for(const alloc of(_lastRoomAllocations[room.id]||[])){
+      if(!roomMap[alloc.course])roomMap[alloc.course]={};
+      roomMap[alloc.course][room.id]=(roomMap[alloc.course][room.id]||0)+alloc.filled;
+    }
+    const ovf=_lastRoomOvf[room.id]||{};
+    for(const ov of Object.values(ovf)){
+      if(!ov)continue;
+      if(!roomMap[ov.course])roomMap[ov.course]={};
+      roomMap[ov.course][room.id]=(roomMap[ov.course][room.id]||0)+ov.count;
+    }
+  }
+
+  // Add manual corners
+  for(const [roomId,sides] of Object.entries(_manualCorners)){
+    for(const [side,courseCode] of Object.entries(sides)){
+      if(!courseCode)continue;
+      const count=1;
+      if(!roomMap[courseCode])roomMap[courseCode]={};
+      roomMap[courseCode][roomId]=(roomMap[courseCode][roomId]||0)+count;
+      totals[courseCode]=(totals[courseCode]||0)+count;
+    }
+  }
+
+  // Rebuild summary table HTML only
+  const rooms=_lastRooms;
+  const validCourses=_lastValidCourses;
+  const placed=Object.values(totals).reduce((s,v)=>s+v,0);
+  const roomColTotals={};
+  let html=`<div class="summary-section"><div class="summary-title">Summary Table</div>
+    <table class="summary-table"><thead><tr><th>Course</th>`;
+  for(const room of rooms)html+=`<th>${room.id}</th>`;
+  html+=`<th>Total</th></tr></thead><tbody>`;
+  for(const course of validCourses){
+    html+=`<tr><td class="course-name">${course.code}</td>`;
+    for(const room of rooms){
+      const val=(roomMap[course.code]||{})[room.id]||0;
+      roomColTotals[room.id]=(roomColTotals[room.id]||0)+val;
+      html+=val?`<td>${val}</td>`:`<td class="zero">—</td>`;
+    }
+    html+=`<td><strong>${totals[course.code]||0}</strong></td></tr>`;
+  }
+  html+=`<tr class="total-row"><td>Total</td>`;
+  for(const room of rooms)html+=`<td>${roomColTotals[room.id]||0}</td>`;
+  html+=`<td class="grand">${placed}</td></tr></tbody></table></div>`;
+
+    document.querySelector('.summary-section').outerHTML=html;
+
+  // Small delay ensures DOM settles after outerHTML replacement
+  setTimeout(()=>{
+  document.querySelectorAll('[data-roomcount]').forEach(el=>{
+    const roomId=el.getAttribute('data-roomcount');
+    const base=parseInt(el.getAttribute('data-base'));
+    const cap=parseInt(el.getAttribute('data-cap'));
+    const regular=parseInt(el.getAttribute('data-regular'));
+    const dim=el.getAttribute('data-dim');
+    const mc=_manualCorners[roomId]||{};
+    const manualCount=Object.values(mc).filter(Boolean).length;
+    const total=base+manualCount;
+    const empty=cap-regular-manualCount;
+    el.innerHTML=`${total} students &nbsp;|&nbsp; ${empty} empty &nbsp;|&nbsp; ${dim}${manualCount?` &nbsp;|&nbsp; <span style="color:#e8b84b">+${manualCount} overflow</span>`:''}`;
+  });
+  },0);
 }
 
 // ── INIT ──────────────────────────────────────────────────────────
