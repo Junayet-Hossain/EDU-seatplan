@@ -139,16 +139,8 @@ const ROOM_PRESETS = [
 ];
 
 // ── STATE ─────────────────────────────────────────────────────────
-let rooms = [
-  {id:'107',rows:7,cols:4,building:'main'},
-  {id:'108',rows:7,cols:4,building:'main'},
-];
-let courses = [
-  {code:'CSE101',n:7},{code:'EEE101',n:7},
-  {code:'BBA101',n:7},{code:'MAT101',n:7},
-  {code:'PHY101',n:7},{code:'ECO101',n:7},
-  {code:'CIV101',n:7},
-];
+let rooms = [];
+let courses = [];
 // ── RENDER SIDEBAR ────────────────────────────────────────────────
 function renderRooms() {
   selectedPresets.clear();
