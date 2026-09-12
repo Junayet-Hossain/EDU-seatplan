@@ -537,7 +537,10 @@ if(adjErrors.length)errors.unshift(...adjErrors);
 
   // Capture state for manual corner interaction
   _manualCorners={};
-  for(const room of rooms)_manualCorners[room.id]={left:null,right:null};
+  for(const room of rooms){
+    _manualCorners[room.id]={};
+    for(let c=1;c<=room.cols;c++)_manualCorners[room.id][c]=null;
+  }
   _lastColourMap=colourMap;
   _lastValidCourses=validCourses;
   _lastRooms=rooms;
@@ -619,16 +622,18 @@ if(adjErrors.length)errors.unshift(...adjErrors);
 
       let table=`<table class="seat-grid"><thead>`;
       // Overflow header row — only shown when manual overflow exists
-      if(showManualL||showManualR||hasL||hasR){
+      if(roomOvfCourses.length>0||hasL||hasR){
         table+=`<tr>`;
         table+=`<td class="row-label" style="font-size:9px;color:var(--muted)">OVF</td>`;
         for(let c=1;c<=room.cols;c++){
-          if(c===1&&(hasL||showManualL)){
-            if(hasL)table+=`<td class="${colourMap[ovf.left.course]||''}" style="border:2px dashed #c8972a;font-size:10px;font-weight:700;text-align:center">⊕ ${ovf.left.course}<br><small>+${ovf.left.count}</small></td>`;
-            else table+=`<td data-corner="${room.id}-left" class="c2" style="border:2px dashed #aaa;text-align:center;vertical-align:middle;padding:4px"><div style="font-size:9px;color:#888;margin-bottom:3px">⊕ overflow</div><select onchange="assignCorner('${room.id}','left',this.value)" style="font-size:10px;width:100%;padding:2px;border:1px solid #ccc;border-radius:3px;background:#fff"><option value="">— assign —</option>${roomOvfCourses.map(o=>`<option value="${o.course}">${o.course} (${o.remaining} left)</option>`).join('')}</select></td>`;
-          } else if(c===room.cols&&(hasR||showManualR)){
-            if(hasR)table+=`<td class="${colourMap[ovf.right.course]||''}" style="border:2px dashed #c8972a;font-size:10px;font-weight:700;text-align:center">⊕ ${ovf.right.course}<br><small>+${ovf.right.count}</small></td>`;
-            else table+=`<td data-corner="${room.id}-right" class="c2" style="border:2px dashed #aaa;text-align:center;vertical-align:middle;padding:4px"><div style="font-size:9px;color:#888;margin-bottom:3px">⊕ overflow</div><select onchange="assignCorner('${room.id}','right',this.value)" style="font-size:10px;width:100%;padding:2px;border:1px solid #ccc;border-radius:3px;background:#fff"><option value="">— assign —</option>${roomOvfCourses.map(o=>`<option value="${o.course}">${o.course} (${o.remaining} left)</option>`).join('')}</select></td>`;
+          const algoOvf=(c===1&&hasL)?ovf.left:(c===room.cols&&hasR)?ovf.right:null;
+          const manualVal=_manualCorners[room.id][c];
+          if(algoOvf){
+            table+=`<td class="${colourMap[algoOvf.course]||''}" style="border:2px dashed #c8972a;font-size:10px;font-weight:700;text-align:center">⊕ ${algoOvf.course}<br><small>+${algoOvf.count}</small></td>`;
+          } else if(manualVal){
+            table+=`<td data-corner="${room.id}-${c}" class="${colourMap[manualVal]||''}" style="border:2px dashed #c8972a;font-size:10px;font-weight:700;text-align:center;vertical-align:middle;cursor:pointer">⊕ ${manualVal}<br><small>+1</small><br><span style="font-size:9px;color:#888;text-decoration:underline" onclick="assignCorner('${room.id}',${c},'')">undo</span></td>`;
+          } else if(roomOvfCourses.length>0){
+            table+=`<td data-corner="${room.id}-${c}" class="c2" style="border:2px dashed #aaa;text-align:center;vertical-align:middle;padding:4px"><div style="font-size:9px;color:#888;margin-bottom:3px">⊕ overflow</div><select onchange="assignCorner('${room.id}',${c},this.value)" style="font-size:10px;width:100%;padding:2px;border:1px solid #ccc;border-radius:3px;background:#fff"><option value="">— assign —</option>${roomOvfCourses.map(o=>`<option value="${o.course}">${o.course} (${o.remaining} left)</option>`).join('')}</select></td>`;
           } else {
             table+=`<td style="background:#f8f8f8;border:1px dashed #e0e0e0"></td>`;
           }
@@ -738,31 +743,23 @@ async function exportDocx(){
     const tableRows=[new TableRow({children:hdrCells,tableHeader:true})];
 
     // Overflow row — mirrors the interface header row
-    const mc=_manualCorners[room.id]||{};
-    const hasOvfLeft=ovf.left||mc.left;
-    const hasOvfRight=ovf.right||mc.right;
-    if(hasOvfLeft||hasOvfRight){
+        const mc=_manualCorners[room.id]||{};
+    const hexPalette=['E8F4FD','EAFAF1','FEF9E7','FDF2F8','F0F3FF','FFF5F5','F0FAF5','FFFBF0','F5F0FF','F0F9FF','FFF0F6','F0FFF4'];
+    const hasAnyOvf=ovf.left||ovf.right||Object.values(mc).some(Boolean);
+    if(hasAnyOvf){
       const ovfRowCells=[new TableCell({children:[new Paragraph({children:[new TextRun({text:'OVF',bold:true,size:18,color:'C8972A'})],alignment:AlignmentType.CENTER})],shading:{fill:'FFF8F0'},borders:{top:border,bottom:border,left:border,right:border},width:{size:10,type:WidthType.PERCENTAGE}})];
       for(let c=1;c<=room.cols;c++){
-        let cellText='';
-        let cellFill='F8F8F8';
-        let cellBorder=border;
-        if(c===1&&hasOvfLeft){
-          const code=ovf.left?ovf.left.course:mc.left;
-          const cnt=ovf.left?ovf.left.count:1;
-          cellText=`⊕ ${code} +${cnt}`;
-          cellFill=colourMap[code]?colourMap[code].replace('background:','').trim():'FEF9E7';
-          // strip css class to hex — use fixed palette
-          const idx=_lastValidCourses.findIndex(vc=>vc.code===code);
-          const hexPalette=['E8F4FD','EAFAF1','FEF9E7','FDF2F8','F0F3FF','FFF5F5','F0FAF5','FFFBF0','F5F0FF','F0F9FF','FFF0F6','F0FFF4'];
+        const algoOvf=(c===1&&ovf.left)?ovf.left:(c===room.cols&&ovf.right)?ovf.right:null;
+        const manualCode=mc[c]||null;
+        let cellText='',cellFill='F8F8F8',cellBorder=border;
+        if(algoOvf){
+          cellText=`⊕ ${algoOvf.course} +${algoOvf.count}`;
+          const idx=_lastValidCourses.findIndex(vc=>vc.code===algoOvf.course);
           cellFill=idx>=0?hexPalette[idx%12]:'FEF9E7';
           cellBorder={style:BorderStyle.DASHED,size:6,color:'C8972A'};
-        } else if(c===room.cols&&hasOvfRight){
-          const code=ovf.right?ovf.right.course:mc.right;
-          const cnt=ovf.right?ovf.right.count:1;
-          cellText=`⊕ ${code} +${cnt}`;
-          const idx=_lastValidCourses.findIndex(vc=>vc.code===code);
-          const hexPalette=['E8F4FD','EAFAF1','FEF9E7','FDF2F8','F0F3FF','FFF5F5','F0FAF5','FFFBF0','F5F0FF','F0F9FF','FFF0F6','F0FFF4'];
+        } else if(manualCode){
+          cellText=`⊕ ${manualCode} +1`;
+          const idx=_lastValidCourses.findIndex(vc=>vc.code===manualCode);
           cellFill=idx>=0?hexPalette[idx%12]:'FEF9E7';
           cellBorder={style:BorderStyle.DASHED,size:6,color:'C8972A'};
         }
@@ -829,30 +826,25 @@ async function exportDocx(){
 }
 
 // ── MANUAL CORNER ASSIGNMENT ──────────────────────────────────────
-function assignCorner(roomId, side, courseCode){
-    const prev=_manualCorners[roomId][side];
-  _manualCorners[roomId][side]=courseCode||null;
-  const td=document.querySelector(`[data-corner="${roomId}-${side}"]`);
+function assignCorner(roomId, col, courseCode){
+  col=parseInt(col)||col; // normalise — may be int or string
+  _manualCorners[roomId][col]=courseCode||null;
+
+  const td=document.querySelector(`[data-corner="${roomId}-${col}"]`);
   if(td){
-        if(!courseCode){
+    if(!courseCode){
       const roomOvfCourses=_getAvailableOvfForRoom(roomId);
-            td.className='c2';
+      td.className='c2';
       td.style.cssText='border:2px dashed #aaa;text-align:center;vertical-align:middle;padding:4px';
-      td.innerHTML=`<div style="font-size:9px;color:#888;margin-bottom:3px">⊕ overflow</div><select onchange="assignCorner('${roomId}','${side}',this.value)" style="font-size:10px;width:100%;padding:2px;border:1px solid #ccc;border-radius:3px;background:#fff"><option value="">— assign —</option>${roomOvfCourses.map(o=>`<option value="${o.course}">${o.course} (${o.remaining} left)</option>`).join('')}</select>`;
+      td.innerHTML=`<div style="font-size:9px;color:#888;margin-bottom:3px">⊕ overflow</div><select onchange="assignCorner('${roomId}',${col},this.value)" style="font-size:10px;width:100%;padding:2px;border:1px solid #ccc;border-radius:3px;background:#fff"><option value="">— assign —</option>${roomOvfCourses.map(o=>`<option value="${o.course}">${o.course} (${o.remaining} left)</option>`).join('')}</select>`;
     } else {
-      const placed=_getPlacedCourses();
-      const placedSoFar=placed[courseCode]||0;
-      const chunks=_unresolvedOvf.filter(o=>o.course===courseCode);
-      const ovf=chunks[placedSoFar]||chunks[0];
-      const count=ovf?ovf.count:1;
       const cls=_lastColourMap[courseCode]||'';
       td.className=cls;
-      td.style.cssText='border:2px dashed #c8972a;font-size:10px;font-weight:700;vertical-align:middle;text-align:center;padding:10px 14px;min-width:90px;cursor:pointer';
-      td.innerHTML=`⊕ ${courseCode}<br><small>+1</small><br><span style="font-size:9px;color:#888;text-decoration:underline;cursor:pointer" onclick="assignCorner('${roomId}','${side}','')">undo</span>`;
+      td.style.cssText='border:2px dashed #c8972a;font-size:10px;font-weight:700;vertical-align:middle;text-align:center;padding:10px 14px;cursor:pointer';
+      td.innerHTML=`⊕ ${courseCode}<br><small>+1</small><br><span style="font-size:9px;color:#888;text-decoration:underline;cursor:pointer" onclick="assignCorner('${roomId}',${col},'')">undo</span>`;
     }
   }
 
-  // Sync all remaining dropdowns
   _syncAllDropdowns();
   rebuildSummary();
 }
@@ -891,13 +883,13 @@ function _syncAllDropdowns(){
   document.querySelectorAll('[data-corner]').forEach(td=>{
     const sel=td.querySelector('select');
     if(!sel)return; // already assigned — skip
-    const parts=td.getAttribute('data-corner').split('-');
-    const side=parts.pop();
-    const roomId=parts.join('-');
+    const attr=td.getAttribute('data-corner');
+    const lastDash=attr.lastIndexOf('-');
+    const roomId=attr.substring(0,lastDash);
+    const col=parseInt(attr.substring(lastDash+1));
     const available=_getAvailableOvfForRoom(roomId);
     const current=sel.value;
-    sel.innerHTML=`<option value="">— assign —</option>
-    ${available.map(o=>`<option value="${o.course}"${o.course===current?' selected':''}>${o.course} (1 student${o.remaining>1?`, ${o.remaining} slots left`:''})</option>`).join('')}`;
+    sel.innerHTML=`<option value="">— assign —</option>${available.map(o=>`<option value="${o.course}"${o.course===current?' selected':''}>${o.course} (${o.remaining} left)</option>`).join('')}`;
     if(!available.length&&!current){
       td.style.opacity='0.4';
       sel.disabled=true;
