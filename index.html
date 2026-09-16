@@ -200,17 +200,15 @@ function renderRooms() {
 }
 
 function renderCourses() {
-  const validCount=courses.filter(c=>c.code&&c.n>0).length;
-  const totalStudentsSidebar=courses.filter(c=>c.code&&c.n>0).reduce((s,c)=>s+c.n,0);
-  const courseHeader=`<div style="font-size:11px;color:var(--muted);margin-bottom:8px;padding:6px 8px;background:var(--white);border-radius:var(--radius);border:1px solid var(--border)">${validCount} course${validCount!==1?'s':''} &nbsp;|&nbsp; <strong style="color:var(--navy)">${totalStudentsSidebar}</strong> students total</div>`;
-  document.getElementById('courseList').innerHTML = courseHeader+courses.map((c,i) => `
+    document.getElementById('courseList').innerHTML = `<div id="courseCounter" style="font-size:11px;color:var(--muted);margin-bottom:8px;padding:6px 8px;background:var(--white);border-radius:var(--radius);border:1px solid var(--border)">—</div>`+courses.map((c,i) => `
     <div class="course-row">
       <input type="text" value="${c.code}" placeholder="Course code"
-        oninput="courses[${i}].code=this.value.trim();renderCourses()">
+        oninput="courses[${i}].code=this.value.trim();updateCourseCounter()">
       <input type="number" class="n-input" min="1" max="500" value="${c.n}"
-        oninput="courses[${i}].n=+this.value;renderCourses()">
+        oninput="courses[${i}].n=+this.value;updateCourseCounter()">
       <button class="del-btn" onclick="delCourse(${i})">×</button>
     </div>`).join('');
+  updateCourseCounter();
 }
 
 function addRoom()   { rooms.push({id:'Room'+(rooms.length+1),rows:7,cols:4,building:'main'}); renderRooms(); }
@@ -238,6 +236,13 @@ function addSelectedPresets() {
   }
   selectedPresets.clear();
   renderRooms();
+}
+function updateCourseCounter(){
+  const el=document.getElementById('courseCounter');
+  if(!el)return;
+  const validCount=courses.filter(c=>c.code&&c.n>0).length;
+  const totalStudentsSidebar=courses.filter(c=>c.code&&c.n>0).reduce((s,c)=>s+c.n,0);
+  el.innerHTML=`${validCount} course${validCount!==1?'s':''} &nbsp;|&nbsp; <strong style="color:var(--navy)">${totalStudentsSidebar}</strong> students total`;
 }
 function addCourse()     { courses.push({code:'',n:0}); renderCourses(); }
 function delCourse(i)    { courses.splice(i,1); renderCourses(); }
@@ -299,7 +304,7 @@ function allocate(rooms, courses, slotSortFn) {
       const canAbsorb=existingSlack>=rem;
       const oversized=slot.cap>=need*2&&need>0;
       const sc=rem===0?[0,slot.cap-fill]:rem<=OVERFLOW_MAX&&canAbsorb?[1,rem]:[2,-need+(oversized?1:0)];
-            // Soft preference: courses that will produce overflow prefer
+      // Soft preference: courses that will produce overflow prefer
       // even-row subgrids (sgIdx 2 or 3) where R1 belongs to a
       // different course — avoids visual stacking in OVF row.
       // sc[2]: 0 = preferred (even-row SG or no overflow), 1 = avoid (odd-row SG with overflow)
