@@ -558,7 +558,7 @@ function generate() {
   const dynamicOvfMax=Math.min(6,rooms.length);
   const ovfBuffer=rooms.length*dynamicOvfMax;
   if(totalStudents>totalSGCap+ovfBuffer){
-    document.getElementById('output').innerHTML=`<div class="error-box"><strong>⛔ Infeasible: Not enough usable seats under the no-adjacent rule.</strong><br>Students: <strong>${totalStudents}</strong> &nbsp;|&nbsp; Usable seats: <strong>${totalSGCap}</strong> (+ up to ${ovfBuffer} overflow) &nbsp;|&nbsp; Shortfall: <strong>${totalStudents-totalSGCap-ovfBuffer}</strong><br>Add more rooms or reduce student count. (Raw capacity: ${totalCap})</div>`;
+    document.getElementById('output').innerHTML=`<div class="error-box"><strong>⛔ Infeasible: Not enough usable seats under the no-adjacent rule.</strong><br>Students: <strong>${totalStudents}</strong> &nbsp;|&nbsp; Usable seats: <strong>${totalSGCap}</strong> (+ up to ${ovfBuffer} extra row) &nbsp;|&nbsp; Shortfall: <strong>${totalStudents-totalSGCap-ovfBuffer}</strong><br>Add more rooms or reduce student count. (Raw capacity: ${totalCap})</div>`;
     return;
   }
 
@@ -647,7 +647,7 @@ if(adjErrors.length)errors.unshift(...adjErrors);
   html+=`<div class="status-bar">
     <div class="stat"><span class="stat-label">Total Students</span><span class="stat-value">${totalStudents}</span></div>
         <div class="stat"><span class="stat-label">Placed</span><span id="statPlaced" data-base="${placed}" data-total="${totalStudents}" class="${placed===totalStudents?'stat-ok':'stat-warn'}">${placed}</span></div>
-    <div class="stat" id="statOvfWrap" style="display:none"><span class="stat-label">Overflow Left</span><span id="statOvf" class="stat-warn">0</span></div>
+    <div class="stat" id="statOvfWrap" style="display:none"><span class="stat-label">Extra Row Left</span><span id="statOvf" class="stat-warn">0</span></div>
     <div class="stat"><span class="stat-label">Usable Seats</span><span class="${totalSGCap>=totalStudents?'stat-ok':'stat-warn'}">${totalSGCap}</span></div>
     <div class="stat"><span class="stat-label">Raw Capacity</span><span class="stat-value">${totalCap}</span></div>
     <div class="stat"><span class="stat-label">Rooms</span><span class="stat-value">${rooms.length}</span></div>
@@ -689,7 +689,7 @@ if(adjErrors.length)errors.unshift(...adjErrors);
       // Overflow header row — only shown when manual overflow exists
       if(roomOvfCourses.length>0||hasL||hasR){
         table+=`<tr>`;
-        table+=`<td class="row-label" style="font-size:9px;color:var(--muted)">OVF</td>`;
+        table+=`<td class="row-label" style="font-size:9px;color:var(--muted)">Extra</td>`;
         for(let c=1;c<=room.cols;c++){
           const algoOvf=(c===1&&hasL)?ovf.left:(c===room.cols&&hasR)?ovf.right:null;
           const manualVal=_manualCorners[room.id][c];
@@ -700,7 +700,7 @@ if(adjErrors.length)errors.unshift(...adjErrors);
                     } else if(roomOvfCourses.length>0){
             const safeOvf=_getAvailableOvfForRoom(room.id,c);
             const none=!safeOvf.length;
-            table+=`<td data-corner="${room.id}-${c}" class="c2" style="border:2px dashed #aaa;text-align:center;vertical-align:middle;padding:4px${none?';opacity:0.4':''}"><div style="font-size:9px;color:#888;margin-bottom:3px">⊕ overflow</div><select${none?' disabled':''} onchange="assignCorner('${room.id}',${c},this.value)" style="font-size:10px;width:100%;padding:2px;border:1px solid #ccc;border-radius:3px;background:#fff"><option value="">— assign —</option>${safeOvf.map(o=>`<option value="${o.course}">${o.course} (${o.remaining} left)</option>`).join('')}</select></td>`;
+            table+=`<td data-corner="${room.id}-${c}" class="c2" style="border:2px dashed #aaa;text-align:center;vertical-align:middle;padding:4px${none?';opacity:0.4':''}"><div style="font-size:9px;color:#888;margin-bottom:3px">⊕ extra row</div><select${none?' disabled':''} onchange="assignCorner('${room.id}',${c},this.value)" style="font-size:10px;width:100%;padding:2px;border:1px solid #ccc;border-radius:3px;background:#fff"><option value="">— assign —</option>${safeOvf.map(o=>`<option value="${o.course}">${o.course} (${o.remaining} left)</option>`).join('')}</select></td>`;
           } else {
             table+=`<td style="background:#f8f8f8;border:1px dashed #e0e0e0"></td>`;
           }  
@@ -733,7 +733,7 @@ if(adjErrors.length)errors.unshift(...adjErrors);
             html+=`<div class="room-card">
         <div class="room-card-header">
           <span class="rname">${room.id}</span>
-                    <span class="rmeta" data-roomcount="${room.id}" data-base="${totalHere}" data-cap="${cap}" data-regular="${studentsHere}" data-dim="${room.rows}×${room.cols}">${totalHere} students &nbsp;|&nbsp; ${cap-studentsHere} empty &nbsp;|&nbsp; ${room.rows}×${room.cols}${ovfCount?` &nbsp;|&nbsp; <span style="color:#e8b84b">+${ovfCount} overflow</span>`:''}</span>
+                    <span class="rmeta" data-roomcount="${room.id}" data-base="${totalHere}" data-cap="${cap}" data-regular="${studentsHere}" data-dim="${room.rows}×${room.cols}">${totalHere} students &nbsp;|&nbsp; ${cap-studentsHere} empty &nbsp;|&nbsp; ${room.rows}×${room.cols}${ovfCount?` &nbsp;|&nbsp; <span style="color:#e8b84b">+${ovfCount} extra row</span>`:''}</span>
         </div>
         <div class="room-card-body">${table}</div>
         <div class="room-legend">${legend}${ovfLegend}</div>
@@ -825,7 +825,7 @@ async function exportDocx(){
     const hexPalette=['E8F4FD','EAFAF1','FEF9E7','FDF2F8','F0F3FF','FFF5F5','F0FAF5','FFFBF0','F5F0FF','F0F9FF','FFF0F6','F0FFF4'];
     const hasAnyOvf=ovf.left||ovf.right||Object.values(mc).some(Boolean);
     if(hasAnyOvf){
-      const ovfRowCells=[new TableCell({children:[new Paragraph({children:[new TextRun({text:'OVF',bold:true,size:18,color:'C8972A'})],alignment:AlignmentType.CENTER})],shading:{fill:'FFF8F0'},borders:{top:border,bottom:border,left:border,right:border},width:{size:10,type:WidthType.PERCENTAGE}})];
+      const ovfRowCells=[new TableCell({children:[new Paragraph({children:[new TextRun({text:'Extra',bold:true,size:18,color:'C8972A'})],alignment:AlignmentType.CENTER})],shading:{fill:'FFF8F0'},borders:{top:border,bottom:border,left:border,right:border},width:{size:10,type:WidthType.PERCENTAGE}})];
       for(let c=1;c<=room.cols;c++){
         const algoOvf=(c===1&&ovf.left)?ovf.left:(c===room.cols&&ovf.right)?ovf.right:null;
         const manualCode=mc[c]||null;
@@ -945,7 +945,7 @@ function assignCorner(roomId, col, courseCode){
             const roomOvfCourses=_getAvailableOvfForRoom(roomId,col);
       td.className='c2';
       td.style.cssText='border:2px dashed #aaa;text-align:center;vertical-align:middle;padding:4px';
-      td.innerHTML=`<div style="font-size:9px;color:#888;margin-bottom:3px">⊕ overflow</div><select onchange="assignCorner('${roomId}',${col},this.value)" style="font-size:10px;width:100%;padding:2px;border:1px solid #ccc;border-radius:3px;background:#fff"><option value="">— assign —</option>${roomOvfCourses.map(o=>`<option value="${o.course}">${o.course} (${o.remaining} left)</option>`).join('')}</select>`;
+      td.innerHTML=`<div style="font-size:9px;color:#888;margin-bottom:3px">⊕ extra row</div><select onchange="assignCorner('${roomId}',${col},this.value)" style="font-size:10px;width:100%;padding:2px;border:1px solid #ccc;border-radius:3px;background:#fff"><option value="">— assign —</option>${roomOvfCourses.map(o=>`<option value="${o.course}">${o.course} (${o.remaining} left)</option>`).join('')}</select>`;
     } else {
       const cls=_lastColourMap[courseCode]||'';
       td.className=cls;
@@ -988,11 +988,11 @@ function _renderOvfNotice(){
   const lines=[];
   for(const[course,{total,rooms}]of Object.entries(info)){
     const left=total-(placed[course]||0);
-    if(left>0)lines.push(`<strong>${course}</strong>: ${left} of ${total} student(s) still need seats. Add manually to any of these rooms where this course already has seats: ${rooms.join(', ')}`);
+    if(left>0)lines.push(`<strong>${course}</strong>: ${left} of ${total} student(s) still need an Extra Row seat. Assign in the Extra row of any of these rooms (course already seated there): ${rooms.join(', ')}}`);
   }
   if(!lines.length){el.innerHTML='';return;}
   el.innerHTML=`<div style="background:#fffbea;border:1px solid #f0c040;border-radius:var(--radius);padding:14px 18px;margin-bottom:16px;font-size:13px;color:#7a5500">
-    <strong style="font-size:15px">📋 Manual Overflow Required</strong><br><br>
+    <strong style="font-size:15px">📋 Extra Row Seating Required</strong><br><br>
     ${lines.join('<br><br>')}
   </div>`;
 }
@@ -1123,7 +1123,7 @@ function rebuildSummary(){
     const manualCount=Object.values(mc).filter(Boolean).length;
     const total=base+manualCount;
     const empty=cap-regular-manualCount;
-    el.innerHTML=`${total} students &nbsp;|&nbsp; ${empty} empty &nbsp;|&nbsp; ${dim}${manualCount?` &nbsp;|&nbsp; <span style="color:#e8b84b">+${manualCount} overflow</span>`:''}`;
+    el.innerHTML=`${total} students &nbsp;|&nbsp; ${empty} empty &nbsp;|&nbsp; ${dim}${manualCount?` &nbsp;|&nbsp; <span style="color:#e8b84b">+${manualCount} extra row</span>`:''}`;
   });
   },0);
 }
@@ -1190,7 +1190,7 @@ function _renderStudentList(){
 
   const manual=Object.values(_getPlacedCourses()).reduce((s,v)=>s+v,0);
   const ovfLeft=_unresolvedOvf.length-manual;
-  if(ovfLeft>0){el.innerHTML=html+`<div class="error-box">⚠ ${ovfLeft} overflow student(s) not yet placed. Assign all manual overflow first — the student list needs final room counts.</div></div>`;return;}
+  if(ovfLeft>0){el.innerHTML=html+`<div class="error-box">⚠ ${ovfLeft} Extra Row student(s) not yet placed. Assign all Extra Row seats first — the student list needs final room counts.</div></div>`;return;}
 
   const map=_getFinalRoomMap();
   const roomTot={};let grand=0;
@@ -1229,7 +1229,7 @@ function _buildStudentListData(){
   if(!courses.length)return{ok:false,reason:'No seat plan generated.'};
   const manual=Object.values(_getPlacedCourses()).reduce((s,v)=>s+v,0);
   const ovfLeft=_unresolvedOvf.length-manual;
-  if(ovfLeft>0)return{ok:false,reason:`${ovfLeft} overflow student(s) not yet placed.`};
+  if(ovfLeft>0)return{ok:false,reason:`${ovfLeft} Extra Row student(s) not yet placed.`};
   const map=_getFinalRoomMap();
   const rows=[],roomTot={},bad=[];let grand=0;
   for(const c of courses){
