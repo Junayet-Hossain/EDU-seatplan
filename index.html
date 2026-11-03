@@ -316,16 +316,21 @@ function getSubgrids(rows, cols, custom) {
   for(let r=1;r<=rows;r++)(r%2?oR:eR).push(r);
   for(let c=1;c<=cols;c++)(c%2?oC:eC).push(c);
   const SG1=[],SG2=[],SG3=[],SG4=[];
-  for(const r of oR)for(const c of oC)SG1.push([r,c]);
-  for(const r of oR)for(const c of eC)SG2.push([r,c]);
-  for(const r of eR)for(const c of oC)SG3.push([r,c]);
-  for(const r of eR)for(const c of eC)SG4.push([r,c]);
+  // Column-by-column order: a partly filled sub-grid completes whole columns first,
+  // leaving entire columns free (cleaner layout, and free seats a new course can use safely)
+  for(const c of oC)for(const r of oR)SG1.push([r,c]);
+  for(const c of eC)for(const r of oR)SG2.push([r,c]);
+  for(const c of oC)for(const r of eR)SG3.push([r,c]);
+  for(const c of eC)for(const r of eR)SG4.push([r,c]);
   return [SG1,SG2,SG3,SG4];
 }
 
 // ── ALLOCATE ──────────────────────────────────────────────────────
-function allocate(rooms, courses, slotSortFn) {
+function allocate(rooms, courses, slotSortFn, earlyMax) {
     const OVERFLOW_MAX = Math.min(6, rooms.length);
+    // Threshold for sending a remainder to the Extra Row DURING Pass 1.
+    // Default = OVERFLOW_MAX (original behaviour). Lower values keep small remainders competing for later sub-grids.
+    const EARLY_MAX = earlyMax!==undefined?Math.min(earlyMax,OVERFLOW_MAX):OVERFLOW_MAX;
 
   // Build slots in round-robin room order
   function buildSlots() {
@@ -379,7 +384,7 @@ function allocate(rooms, courses, slotSortFn) {
     const code=best.c.code,fill=Math.min(remaining[code],slot.cap),rem=remaining[code]-fill;
     slot.course=code;slot.filled=fill;
     courseRooms[code].add(slot.roomId);lastRoom[code]=slot.roomId;remaining[code]=rem;
-        if(rem>0&&rem<=OVERFLOW_MAX){pending[code]=(pending[code]||0)+rem;remaining[code]=0;courseRooms[code].add('__pending__');}
+        if(rem>0&&rem<=EARLY_MAX){pending[code]=(pending[code]||0)+rem;remaining[code]=0;courseRooms[code].add('__pending__');}
   }
   for(const c of courses){
     const need=remaining[c.code];
@@ -538,13 +543,18 @@ function bestAllocate(rooms, courses) {
 
   const courseVariants=courseOrders(courses);
 
+    // Early Extra-Row thresholds: undefined = original behaviour (always tried first).
+  // Lower values let a course with a small remainder keep competing for later sub-grids.
+  const earlyVals=[undefined,5,4,3,2,1];
   let best=null;
   outer:
+  for(const ev of earlyVals)
   for(const co of courseVariants){
     for(const fn of slotFns){
       const cloned=co.map(c=>({...c}));
-      const result=allocate(rooms,cloned,fn);
+      const result=allocate(rooms,cloned,fn,ev);
       const resultHard=result.errors.filter(e=>!e.startsWith('OVERFLOW')).length;
+      if(ev!==undefined&&resultHard>0)continue; // extra runs may never introduce hard errors
       const bestHard=best?best.errors.filter(e=>!e.startsWith('OVERFLOW')).length:Infinity;
             // Count overflow courses in even-row subgrids (better OVF placement)
       const countEvenSG=r=>Object.values(r.roomAllocations).flat().filter(a=>
@@ -778,7 +788,7 @@ if(adjErrors.length)errors.unshift(...adjErrors);
           if(room.custom==='n201'&&r>n201H[c-1]){table+=`<td class="invalid-cell"></td>`;continue;}
           const course=grid[`${r},${c}`];
           const cls=course?colourMap[course]||'':'';
-          table+=course?`<td class="${cls}">${course}</td>`:`<td class="empty">—</td>`;
+          table+=course?`<td class="${cls}">${course}</td>`:(_unresolvedOvf.length?_emptyCellHtml(room.id,r,c):`<td class="empty">—</td>`);
         }
         table+=`</tr>`;
       }
@@ -919,7 +929,7 @@ async function exportDocx(){
       if(room.custom==='n201'){const anyValid=[1,2,3,4].some(c=>r<=n201H[c-1]);if(!anyValid)continue;}
       const cells=[new TableCell({children:[new Paragraph({children:[new TextRun({text:`R${r}`,size:22,color:'6B7591'})],alignment:AlignmentType.CENTER})],shading:{fill:'F8F9FC'},borders:{top:border,bottom:border,left:border,right:border},width:{size:10,type:WidthType.PERCENTAGE},margins:{top:120,bottom:120,left:100,right:100}})];
       for(let c=1;c<=room.cols;c++){
-        const course=grid[`${r},${c}`]||'';
+        const course=grid[`${r},${c}`]||mc[`e${r}_${c}`]||'';
         const fill=course?colourMap[course]||'FFFFFF':'FFFFFF';
         cells.push(new TableCell({children:[new Paragraph({children:[new TextRun({text:course,size:24,bold:!!course})],alignment:AlignmentType.CENTER})],shading:{fill,type:ShadingType.CLEAR},borders:{top:border,bottom:border,left:border,right:border},width:{size:Math.floor(80/room.cols),type:WidthType.PERCENTAGE},margins:{top:120,bottom:120,left:100,right:100}}));
       }
@@ -1011,26 +1021,44 @@ async function exportDocx(){
 
 // ── MANUAL CORNER ASSIGNMENT ──────────────────────────────────────
 function assignCorner(roomId, col, courseCode){
-  col=parseInt(col)||col; // normalise — may be int or string
+  col=/^\d+$/.test(String(col))?parseInt(col):col; // front = number, back = 'bN', empty seat = 'eR_C'
+  const isE=String(col)[0]==='e';
+  // Empty seat: allowed even if it breaks the no-adjacent rule, but only after a warning
+  if(isE&&courseCode){
+    const conf=_conflicts(roomId,col,courseCode);
+    if(conf.length&&!confirm(`⚠ ${courseCode} would sit next to another ${courseCode} student in ${roomId} (${conf.join(', ')}).\n\nThis breaks the no-adjacent rule. Place anyway?`)){
+      const s=document.querySelector(`[data-corner="${roomId}-${col}"] select`);if(s)s.value='';
+      return;
+    }
+  }
   _manualCorners[roomId][col]=courseCode||null;
 
   const td=document.querySelector(`[data-corner="${roomId}-${col}"]`);
   if(td){
     if(!courseCode){
-            const roomOvfCourses=_getAvailableOvfForRoom(roomId,col);
-      td.className='c2';
-      td.style.cssText='border:2px dashed #aaa;text-align:center;vertical-align:middle;padding:4px';
-            td.innerHTML=`<div style="font-size:9px;color:#888;margin-bottom:3px">⊕ ${String(col)[0]==='b'?'back row':'extra row'}</div><select onchange="assignCorner('${roomId}','${col}',this.value)" style="font-size:10px;width:100%;padding:2px;border:1px solid #ccc;border-radius:3px;background:#fff"><option value="">— assign —</option>${roomOvfCourses.map(o=>`<option value="${o.course}">${o.course} (${o.remaining} left)</option>`).join('')}</select>`;
+      if(isE){
+        const[r,c]=col.slice(1).split('_').map(Number);
+        td.outerHTML=_emptyCellHtml(roomId,r,c);
+      } else {
+        const o=_optsHtml(roomId,col);
+        td.className='c2';
+        td.title='';
+        td.style.cssText='border:2px dashed #aaa;text-align:center;vertical-align:middle;padding:4px';
+        td.innerHTML=`<div style="font-size:9px;color:#888;margin-bottom:3px">⊕ ${String(col)[0]==='b'?'back row':'extra row'}</div><select onchange="assignCorner('${roomId}','${col}',this.value)" style="font-size:10px;width:100%;padding:2px;border:1px solid #ccc;border-radius:3px;background:#fff">${o.html}</select>`;
+      }
     } else {
-      const cls=_lastColourMap[courseCode]||'';
-      td.className=cls;
-      td.style.cssText='border:2px dashed #c8972a;font-size:10px;font-weight:700;vertical-align:middle;text-align:center;padding:10px 14px;cursor:pointer';
-            td.innerHTML=`⊕ ${courseCode}<br><small>+1</small><br><span style="font-size:9px;color:#888;text-decoration:underline;cursor:pointer" onclick="assignCorner('${roomId}','${col}','')">undo</span>`;
+      const conf=isE?_conflicts(roomId,col,courseCode):[];
+      td.className=_lastColourMap[courseCode]||'';
+      td.style.cssText=isE
+        ?`border:2px ${conf.length?'solid #c0392b':'dashed #1e7d5a'};font-size:10px;font-weight:700;vertical-align:middle;text-align:center;padding:4px`
+        :'border:2px dashed #c8972a;font-size:10px;font-weight:700;vertical-align:middle;text-align:center;padding:10px 14px;cursor:pointer';
+      td.title=conf.length?'Breaks no-adjacent rule: '+conf.join(', '):'';
+      td.innerHTML=`${conf.length?'⚠':'⊕'} ${courseCode}<br><small>+1</small><br><span style="font-size:9px;color:#888;text-decoration:underline;cursor:pointer" onclick="assignCorner('${roomId}','${col}','')">undo</span>`;
     }
   }
 
   _syncAllDropdowns();
-    rebuildSummary();
+  rebuildSummary();
   _renderOvfNotice();
   _renderStatus();
   _renderStudentList();
@@ -1063,13 +1091,20 @@ function _renderOvfNotice(){
   const lines=[];
   for(const[course,{total,rooms}]of Object.entries(info)){
     const left=total-(placed[course]||0);
-    if(left>0)lines.push(`<strong>${course}</strong>: ${left} of ${total} student(s) still need an Extra Row seat. Assign in the front or back Extra row of any of these rooms (course already seated there): ${rooms.join(', ')}}`);
+    if(left>0)lines.push(`<strong>${course}</strong>: ${left} of ${total} student(s) still need a seat. Assign in the front or back Extra row of: ${rooms.join(', ')} — or in any empty seat (—).`);
   }
-  if(!lines.length){el.innerHTML='';return;}
-  el.innerHTML=`<div style="background:#fffbea;border:1px solid #f0c040;border-radius:var(--radius);padding:14px 18px;margin-bottom:16px;font-size:13px;color:#7a5500">
+  // Live list of manual seats that break the no-adjacent rule
+  const warns=[];
+  for(const[roomId,m]of Object.entries(_manualCorners))
+    for(const[k,v]of Object.entries(m))
+      if(v){const cf=_conflicts(roomId,k,v);if(cf.length){const[r,c]=_keyPos(roomId,k);warns.push(`${roomId} ${_posLabel(roomId,r,c)}: <strong>${v}</strong> next to ${cf.join(', ')}`);}}
+  let out='';
+  if(lines.length)out+=`<div style="background:#fffbea;border:1px solid #f0c040;border-radius:var(--radius);padding:14px 18px;margin-bottom:16px;font-size:13px;color:#7a5500">
     <strong style="font-size:15px">📋 Extra Row Seating Required</strong><br><br>
     ${lines.join('<br><br>')}
   </div>`;
+  if(warns.length)out+=`<div class="error-box"><strong>⚠ No-adjacent rule broken by manual placement:</strong><br>${warns.join('<br>')}</div>`;
+  el.innerHTML=out;
 }
 
 function _getPlacedCourses(){
@@ -1081,22 +1116,35 @@ function _getPlacedCourses(){
   return placed;
 }
 
-function _isOvfSafe(roomId,col,course){
-  const g=_lastGrids[roomId]||{};
-  const mc=_manualCorners[roomId]||{};
-  if(typeof col==='string'&&col[0]==='b'){
-    // Back row: check last row below-diagonals + neighbouring back cells
-    const n=parseInt(col.slice(1));
-    const room=_lastRooms.find(r=>r.id===roomId);
-    const R=room?room.rows:0;
-    for(const c of [n-1,n,n+1])if(g[`${R},${c}`]===course)return false;
-    for(const c of [n-1,n+1])if(mc['b'+c]===course)return false;
-    return true;
-  }
-  for(const c of [col-1,col,col+1])if(g[`1,${c}`]===course)return false; // R1 below + diagonals
-  for(const c of [col-1,col+1])if(mc[c]===course)return false;            // neighbouring OVF cells
-  return true;
+// ── UNIFIED SEAT CHECK: front = row 0, seats = rows 1..R, back = row R+1 ──
+function _keyPos(roomId,key){
+  const room=_lastRooms.find(r=>r.id===roomId);const R=room?room.rows:0;
+  const k=String(key);
+  if(/^\d+$/.test(k))return[0,+k];
+  if(k[0]==='b')return[R+1,+k.slice(1)];
+  return k.slice(1).split('_').map(Number); // 'eR_C'
 }
+function _posLabel(roomId,r,c){
+  const room=_lastRooms.find(x=>x.id===roomId);const R=room?room.rows:0;
+  return r===0?`Front C${c}`:r===R+1?`Back C${c}`:`R${r}C${c}`;
+}
+function _effGrid(roomId){
+  // Algorithm seats + every manual seat (front, back, empty seats)
+  const g={...(_lastGrids[roomId]||{})};
+  const mc=_manualCorners[roomId]||{};
+  for(const[k,v]of Object.entries(mc)){if(!v)continue;const[r,c]=_keyPos(roomId,k);g[`${r},${c}`]=v;}
+  return g;
+}
+function _conflicts(roomId,key,course){
+  // Same-course neighbours (all 8 directions) of this position; [] = safe
+  const g=_effGrid(roomId);const[r,c]=_keyPos(roomId,key);const out=[];
+  for(let dr=-1;dr<=1;dr++)for(let dc=-1;dc<=1;dc++){
+    if(!dr&&!dc)continue;
+    if(g[`${r+dr},${c+dc}`]===course)out.push(_posLabel(roomId,r+dr,c+dc));
+  }
+  return out;
+}
+function _isOvfSafe(roomId,col,course){return _conflicts(roomId,col,course).length===0;}
 
 function _backCellHtml(roomId,c,colourMap){
   const key='b'+c;
@@ -1128,8 +1176,6 @@ function _getAvailableOvfForRoom(roomId,col){
 }
 
 function _syncAllDropdowns(){
-  const placed=_getPlacedCourses();
-  // Find all active grey dropdowns and rebuild their options
   document.querySelectorAll('[data-corner]').forEach(td=>{
     const sel=td.querySelector('select');
     if(!sel)return; // already assigned — skip
@@ -1137,18 +1183,35 @@ function _syncAllDropdowns(){
     const lastDash=attr.lastIndexOf('-');
     const roomId=attr.substring(0,lastDash);
     const raw=attr.substring(lastDash+1);
-    const col=raw[0]==='b'?raw:parseInt(raw);
-    const available=_getAvailableOvfForRoom(roomId,col);
-    const current=sel.value;
-    sel.innerHTML=`<option value="">— assign —</option>${available.map(o=>`<option value="${o.course}"${o.course===current?' selected':''}>${o.course} (${o.remaining} left)</option>`).join('')}`;
-    if(!available.length&&!current){
-      td.style.opacity='0.4';
-      sel.disabled=true;
-    } else {
-      td.style.opacity='1';
-      sel.disabled=false;
-    }
+    const col=/^\d+$/.test(raw)?parseInt(raw):raw;
+    const o=_optsHtml(roomId,col);
+    sel.innerHTML=String(col)[0]==='e'?o.html.replace('— assign —','—'):o.html;
+    td.style.opacity=o.n?'1':'0.4';
+    sel.disabled=!o.n;
   });
+}
+
+function _emptyOptions(roomId,key){
+  // Empty seats: any course still waiting; unsafe ones are flagged, not hidden
+  const placed=_getPlacedCourses(),counts={};
+  for(const o of _unresolvedOvf)counts[o.course]=(counts[o.course]||0)+1;
+  return Object.keys(counts).filter(c=>(placed[c]||0)<counts[c])
+    .map(c=>({course:c,remaining:counts[c]-(placed[c]||0),conf:_conflicts(roomId,key,c)}));
+}
+
+function _optsHtml(roomId,key){
+  const list=String(key)[0]==='e'?_emptyOptions(roomId,key):_getAvailableOvfForRoom(roomId,key);
+  const html=`<option value="">— assign —</option>`+list.map(o=>{
+    const bad=o.conf&&o.conf.length;
+    return `<option value="${o.course}">${bad?'⚠ ':''}${o.course} (${o.remaining} left)${bad?' – adjacent':''}</option>`;
+  }).join('');
+  return{n:list.length,html};
+}
+
+function _emptyCellHtml(roomId,r,c){
+  const key=`e${r}_${c}`;
+  const o=_optsHtml(roomId,key);
+  return `<td data-corner="${roomId}-${key}" class="empty" style="padding:2px${o.n?'':';opacity:0.4'}"><select${o.n?'':' disabled'} onchange="assignCorner('${roomId}','${key}',this.value)" style="font-size:10px;width:100%;padding:1px;border:1px dashed #ccc;border-radius:3px;background:#fff;color:#888">${o.html.replace('— assign —','—')}</select></td>`;
 }
 
 function rebuildSummary(){
@@ -1214,10 +1277,12 @@ function rebuildSummary(){
     const regular=parseInt(el.getAttribute('data-regular'));
     const dim=el.getAttribute('data-dim');
     const mc=_manualCorners[roomId]||{};
-    const manualCount=Object.values(mc).filter(Boolean).length;
+        const manualCount=Object.values(mc).filter(Boolean).length;
+    const inSeat=Object.entries(mc).filter(([k,v])=>v&&k[0]==='e').length; // placed in empty seats
+    const extra=manualCount-inSeat;                                       // front/back Extra rows
     const total=base+manualCount;
-    const empty=cap-regular-manualCount;
-    el.innerHTML=`${total} students &nbsp;|&nbsp; ${empty} empty &nbsp;|&nbsp; ${dim}${manualCount?` &nbsp;|&nbsp; <span style="color:#e8b84b">+${manualCount} extra row</span>`:''}`;
+    const empty=cap-regular-inSeat;
+    el.innerHTML=`${total} students &nbsp;|&nbsp; ${empty} empty &nbsp;|&nbsp; ${dim}${extra?` &nbsp;|&nbsp; <span style="color:#e8b84b">+${extra} extra row</span>`:''}`;
   });
   },0);
 }
