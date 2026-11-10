@@ -1,0 +1,294 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Question Paper Printing — East Delta University</title>
+<link rel="icon" type="image/png" href="edu-logo.png?v=2">
+<script src="https://cdn.jsdelivr.net/npm/pdf-lib@1.17.1/dist/pdf-lib.min.js"></script>
+<style>
+:root{--navy:#6b0f1a;--gold:#c8972a;--gold2:#e8b84b;--light:#fdf8f8;--border:#e8d5d7;--text:#2a0a0e;--muted:#8b6068;--green:#1e7d5a;--red:#c0392b;--radius:6px}
+*{box-sizing:border-box;margin:0;padding:0}
+body{font-family:'Segoe UI',system-ui,sans-serif;background:var(--light);color:var(--text)}
+header{background:var(--navy);color:#fff;padding:18px 32px;display:flex;align-items:center;gap:20px;border-bottom:3px solid var(--gold)}
+header img{width:48px;height:48px;border-radius:8px;object-fit:contain;background:#fff;padding:2px}
+header h1{font-size:18px} header p{font-size:12px;color:#e0c8cc;margin-top:2px}
+header a{margin-left:auto;color:var(--gold2);font-size:13px;font-weight:600;text-decoration:none}
+main{max-width:1100px;margin:0 auto;padding:24px}
+.card{background:#fff;border:1px solid var(--border);border-radius:var(--radius);padding:18px;margin-bottom:18px}
+.card h2{font-size:15px;color:var(--navy);margin-bottom:4px}
+.hint{font-size:12px;color:var(--muted);margin-bottom:12px;line-height:1.6}
+.row{display:flex;flex-wrap:wrap;gap:10px;align-items:center}
+input[type=text],textarea{padding:6px 8px;border:1px solid var(--border);border-radius:var(--radius);font-size:13px;font-family:inherit}
+textarea{width:100%;font-family:monospace;font-size:12px}
+.btn{padding:8px 16px;border:1px solid var(--navy);background:#fff;color:var(--navy);border-radius:var(--radius);font-size:13px;font-weight:600;cursor:pointer}
+.btn:hover{background:var(--navy);color:#fff}
+.btn.primary{background:var(--navy);color:#fff}
+.btn.small{padding:4px 10px;font-size:12px}
+table{border-collapse:collapse;width:100%;font-size:12px;margin-top:10px}
+th,td{border:1px solid var(--border);padding:4px;text-align:center}
+th{background:var(--navy);color:#fff;font-weight:600;white-space:nowrap}
+td input{width:100%;text-align:center;border:none;background:transparent;padding:4px;font-size:12px}
+th input{width:70px;text-align:center;border:none;background:transparent;color:#fff;font-weight:600;padding:2px}
+.tot{background:#f8f0f1;font-weight:700}
+.del{border:none;background:none;color:var(--red);cursor:pointer;font-size:14px;padding:0 3px}
+th .del{color:#ffd0d0}
+.papers{display:grid;grid-template-columns:repeat(auto-fill,minmax(230px,1fr));gap:10px}
+.paper{border:1px solid var(--border);border-radius:var(--radius);padding:8px;background:var(--light)}
+.paper b{font-size:12px;color:var(--navy)}
+.st{font-size:11px;margin-top:4px}
+#msg{font-size:13px;margin-top:12px;line-height:1.8}
+.muted{color:var(--muted);font-size:12px}
+</style>
+</head>
+<body>
+<header>
+  <img src="edu-logo.png" alt="EDU">
+  <div><h1>Question Paper Printing</h1><p>East Delta University — prints question papers already sorted room by room</p></div>
+  <a href="index.html">← Seat Plan Generator</a>
+</header>
+<main>
+  <div class="card">
+    <h2>1 · Exam details &amp; Summary Table</h2>
+    <div class="hint">Copies per course and room. Imported automatically when opened from the Seat Plan Generator. Otherwise load the last generated plan, paste the Summary Table (copied from the Word file or Excel), or enter it manually. All numbers can be edited.</div>
+    <div class="row" style="margin-bottom:10px">
+      <input type="text" id="exam" placeholder="Exam name" style="flex:2;min-width:200px" oninput="S.exam=this.value">
+      <input type="text" id="date" placeholder="Date" style="flex:1;min-width:100px" oninput="S.date=this.value">
+      <input type="text" id="time" placeholder="Time" style="flex:1;min-width:140px" oninput="S.time=this.value">
+    </div>
+    <div class="row">
+      <button class="btn" onclick="loadLast()">↺ Load last generated seat plan</button>
+      <button class="btn" onclick="$('pasteWrap').style.display='block'">📋 Paste Summary Table</button>
+      <button class="btn" onclick="startEmpty()">✎ Enter manually</button>
+      <span id="srcNote" class="muted"></span>
+    </div>
+    <div id="pasteWrap" style="display:none;margin-top:10px">
+      <textarea id="pasteBox" rows="6" placeholder="Select the whole Summary Table in Word or Excel (header row: Course | rooms… | Total), copy, and paste here."></textarea>
+      <div class="row" style="margin-top:6px"><button class="btn small primary" onclick="readPasted()">Read table</button><button class="btn small" onclick="$('pasteWrap').style.display='none'">Cancel</button></div>
+    </div>
+    <div id="sumGrid"></div>
+  </div>
+
+  <div class="card">
+    <h2>2 · Question papers (one PDF per course)</h2>
+    <div class="hint">Choose the PDF for each course. Courses without a PDF are skipped with a warning.</div>
+    <div id="papers" class="papers"></div>
+  </div>
+
+  <div class="card">
+    <h2>3 · Build the print file</h2>
+    <div class="hint">Each room batch starts with a separator page (room, course, expected students, Present/Absent). After building, open the PDF, press Ctrl+P, keep Copies = 1 and print as the green message says.</div>
+    <label class="muted" style="display:block;margin-bottom:10px"><input type="checkbox" id="forceDuplex"> Always prepare for double-sided printing (blank back after every separator, even for 1-page papers)</label>
+    <div class="row">
+      <button class="btn primary" onclick="build('course')">📑 Build per-course PDFs</button>
+      <button class="btn primary" onclick="build('room')">🗂 Build master PDF (room by room)</button>
+    </div>
+    <div id="msg"></div>
+  </div>
+</main>
+
+<script>
+const S={exam:'',date:'',time:'',rooms:[],courses:[]};   // summary: rooms in order, courses with {room:count}
+let papers={};                                           // {courseCode:{bytes,name,pages}}
+const KEY='eduSeatPlanSummary';
+const $=id=>document.getElementById(id);
+const esc=s=>String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+const total=c=>S.rooms.reduce((s,r)=>s+(+c.counts[r]||0),0);
+
+// ── SUMMARY SOURCES ──────────────────────────────────────────────
+function setState(d,note){
+  if(d.exam)S.exam=d.exam;if(d.date)S.date=d.date;if(d.time)S.time=d.time;
+  S.rooms=[...(d.rooms||[])];
+  S.courses=(d.courses||[]).map(c=>({code:String(c.code),counts:{...(c.counts||{})}}));
+  $('exam').value=S.exam;$('date').value=S.date;$('time').value=S.time;
+  $('srcNote').textContent=note||'';
+  renderSummary();
+}
+function loadLast(){
+  let d=null;try{d=JSON.parse(localStorage.getItem(KEY));}catch(e){}
+  if(!d){alert('No saved seat plan found in this browser.\n\nFinish the seat plan in the generator first (all Extra Row students placed), or paste the Summary Table.');return;}
+  if(S.courses.length&&!confirm('Replace the current table with the last generated seat plan?'))return;
+  setState(d,'✓ Loaded last generated seat plan'+(d.savedAt?' ('+d.savedAt+')':''));
+}
+function startEmpty(){
+  if(S.courses.length&&!confirm('Replace the current table with an empty one?'))return;
+  setState({rooms:['Room1'],courses:[{code:'COURSE1',counts:{}}]},'Manual entry — type room names, course codes and counts');
+}
+function readPasted(){
+  const lines=$('pasteBox').value.split(/\r?\n/).filter(l=>l.trim());
+  const rows=lines.map(l=>l.split('\t').map(x=>x.trim()));
+  if(rows.length<2||rows[0].length<2){alert('Could not read the table.\n\nCopy the table directly from Word or Excel (cells must stay separated), including the header row.');return;}
+  const isTotal=s=>/^total$/i.test(s);
+  const hdr=rows[0],idx=[];
+  hdr.forEach((h,i)=>{if(i>0&&h&&!isTotal(h))idx.push(i);});
+  const rooms=idx.map(i=>hdr[i]),courses=[];
+  for(const r of rows.slice(1)){
+    if(!r[0]||isTotal(r[0]))continue;
+    const counts={};idx.forEach((ci,k)=>{const n=parseInt(r[ci]);if(n>0)counts[rooms[k]]=n;});
+    courses.push({code:r[0],counts});
+  }
+  if(!rooms.length||!courses.length){alert('No rooms or courses found in the pasted table.');return;}
+  $('pasteWrap').style.display='none';
+  setState({rooms,courses},'✓ Read from pasted table — please check the numbers');
+}
+
+// ── EDITABLE SUMMARY TABLE ───────────────────────────────────────
+function renderSummary(){
+  const el=$('sumGrid');
+  if(!S.rooms.length||!S.courses.length){el.innerHTML='<p class="muted" style="margin-top:10px">No summary yet.</p>';renderPapers();return;}
+  let h=`<div style="overflow-x:auto"><table><thead><tr><th>Course</th>${S.rooms.map((r,i)=>`<th><input value="${esc(r)}" onchange="renameRoom(${i},this.value)"><button class="del" title="Remove room" onclick="delRoom(${i})">×</button></th>`).join('')}<th>Total</th></tr></thead><tbody>`;
+  S.courses.forEach((c,ci)=>{
+    h+=`<tr><td style="text-align:left;white-space:nowrap"><button class="del" title="Remove course" onclick="delCourse(${ci})">×</button><input value="${esc(c.code)}" onchange="renameCourse(${ci},this.value)" style="width:110px;text-align:left;font-weight:600"></td>`;
+    S.rooms.forEach((r,ri)=>{h+=`<td><input type="number" min="0" value="${c.counts[r]||''}" onchange="setCount(${ci},${ri},this.value)"></td>`;});
+    h+=`<td class="tot">${total(c)}</td></tr>`;
+  });
+  h+=`<tr class="tot"><td style="text-align:left">Total</td>${S.rooms.map(r=>`<td>${S.courses.reduce((s,c)=>s+(+c.counts[r]||0),0)}</td>`).join('')}<td>${S.courses.reduce((s,c)=>s+total(c),0)}</td></tr></tbody></table></div>
+  <div class="row" style="margin-top:8px"><button class="btn small" onclick="addCourse()">+ Course</button><button class="btn small" onclick="addRoom()">+ Room</button></div>`;
+  el.innerHTML=h;renderPapers();
+}
+function setCount(ci,ri,v){const r=S.rooms[ri],n=Math.max(0,parseInt(v)||0);if(n)S.courses[ci].counts[r]=n;else delete S.courses[ci].counts[r];renderSummary();}
+function renameRoom(i,v){
+  v=v.trim();const old=S.rooms[i];
+  if(!v||S.rooms.some((r,k)=>k!==i&&r===v)){alert('Room names must be unique and not empty.');renderSummary();return;}
+  for(const c of S.courses)if(old in c.counts){c.counts[v]=c.counts[old];delete c.counts[old];}
+  S.rooms[i]=v;renderSummary();
+}
+function renameCourse(ci,v){
+  v=v.trim();const old=S.courses[ci].code;
+  if(!v||S.courses.some((c,k)=>k!==ci&&c.code===v)){alert('Course codes must be unique and not empty.');renderSummary();return;}
+  if(papers[old]){papers[v]=papers[old];delete papers[old];}
+  S.courses[ci].code=v;renderSummary();
+}
+function delRoom(i){if(!confirm(`Remove room ${S.rooms[i]}?`))return;const r=S.rooms.splice(i,1)[0];for(const c of S.courses)delete c.counts[r];renderSummary();}
+function delCourse(ci){if(!confirm(`Remove course ${S.courses[ci].code}?`))return;delete papers[S.courses[ci].code];S.courses.splice(ci,1);renderSummary();}
+function addCourse(){let n=S.courses.length+1;while(S.courses.some(c=>c.code==='COURSE'+n))n++;S.courses.push({code:'COURSE'+n,counts:{}});renderSummary();}
+function addRoom(){let n=S.rooms.length+1;while(S.rooms.includes('Room'+n))n++;S.rooms.push('Room'+n);renderSummary();}
+
+// ── QUESTION PAPER UPLOADS ───────────────────────────────────────
+function renderPapers(){
+  const el=$('papers');
+  if(!S.courses.length){el.innerHTML='<p class="muted">Add the Summary Table first (step 1).</p>';return;}
+  el.innerHTML=S.courses.map((c,ci)=>{const p=papers[c.code];return `<div class="paper"><b>${esc(c.code)}</b> <span class="muted">(${total(c)} copies)</span>
+    <input type="file" accept="application/pdf" onchange="loadPaper(${ci},this.files[0])" style="font-size:11px;margin-top:4px;width:100%">
+    <div class="st" id="pst${ci}" style="color:${p?'var(--green)':'var(--muted)'}">${p?`✓ ${esc(p.name)} — ${p.pages} page(s)`:'No PDF yet'}</div></div>`;}).join('');
+}
+async function loadPaper(ci,file){
+  const st=$('pst'+ci),code=S.courses[ci].code;
+  if(!file)return;
+  if(!window.PDFLib){st.style.color='var(--red)';st.textContent='✗ PDF library not loaded — check internet and reload';return;}
+  try{
+    const bytes=await file.arrayBuffer();
+    const doc=await PDFLib.PDFDocument.load(bytes);
+    papers[code]={bytes,name:file.name,pages:doc.getPageCount()};
+    st.style.color='var(--green)';st.textContent=`✓ ${file.name} — ${doc.getPageCount()} page(s)`;
+  }catch(e){
+    delete papers[code];
+    st.style.color='var(--red)';st.textContent='✗ Cannot read this PDF (damaged or password-protected)';
+  }
+}
+
+// ── BUILD PRINT FILES ────────────────────────────────────────────
+function downloadPdf(bytes,fname){
+  const a=document.createElement('a');
+  a.href=URL.createObjectURL(new Blob([bytes],{type:'application/pdf'}));
+  a.download=fname;document.body.appendChild(a);a.click();a.remove();
+  setTimeout(()=>URL.revokeObjectURL(a.href),60000);
+}
+function drawSep(p,font,bold,w,h,exam,when,roomId,code,n,rgb){
+  const navy=rgb(0.42,0.06,0.1),grey=rgb(0.35,0.35,0.35),black=rgb(0,0,0);
+  const center=(t,y,size,f,col)=>p.drawText(t,{x:Math.max(40,(w-f.widthOfTextAtSize(t,size))/2),y,size,font:f,color:col});
+  p.drawRectangle({x:36,y:36,width:w-72,height:h-72,borderColor:navy,borderWidth:3});
+  let y=h-110;
+  center(exam,y,16,bold,navy);y-=24;
+  center(when,y,12,font,grey);y-=70;
+  center('ROOM',y,14,font,grey);y-=60;
+  center(roomId,y,54,bold,navy);y-=60;
+  center('COURSE',y,14,font,grey);y-=44;
+  center(code,y,34,bold,black);y-=60;
+  center(`Expected students: ${n}`,y,20,bold,black);y-=60;
+  center('Present: ____________',y,18,font,black);y-=40;
+  center('Absent:  ____________',y,18,font,black);y-=60;
+  center('Invigilator signature: ____________________',y,13,font,grey);
+}
+async function build(mode){
+  const msg=$('msg');
+  if(!window.PDFLib){alert('PDF library not loaded. Check your internet connection and reload the page.');return;}
+  const active=S.courses.filter(c=>total(c)>0);
+  if(!active.length){alert('The Summary Table is empty. Add it first (step 1).');return;}
+  if(!active.some(c=>papers[c.code])){alert('Upload at least one question paper PDF first (step 2).');return;}
+  const missing=active.filter(c=>!papers[c.code]).map(c=>c.code);
+  if(missing.length&&!confirm(`No PDF uploaded for: ${missing.join(', ')}\n\nThese courses will be skipped. Continue?`))return;
+
+  msg.style.color='var(--muted)';msg.textContent='⏳ Building PDF…';
+  try{
+    const{PDFDocument,StandardFonts,rgb}=PDFLib;
+    const clean=s=>String(s).replace(/[^\x20-\x7E]/g,'-'); // standard PDF font: English letters/numbers only
+    const exam=clean(S.exam),when=clean(S.date+'  |  '+S.time);
+    const tag=(S.date||'exam').replace(/[^\w]+/g,'_');
+    const force=$('forceDuplex').checked;
+
+    async function makeDoc(batches){
+      const out=await PDFDocument.create();
+      const font=await out.embedFont(StandardFonts.Helvetica),bold=await out.embedFont(StandardFonts.HelveticaBold);
+      const duplex=force||batches.some(b=>papers[b.code].pages>1); // any multi-page paper → prepare whole file for double-sided
+      const cache={};
+      for(const b of batches){
+        if(!cache[b.code]){ // embed each paper once, reuse for every copy (small file)
+          const src=await PDFDocument.load(papers[b.code].bytes);
+          cache[b.code]=await out.embedPdf(src,src.getPageIndices());
+        }
+        const emb=cache[b.code],w=emb[0].width,h=emb[0].height;
+        drawSep(out.addPage([w,h]),font,bold,w,h,exam,when,clean(b.room),clean(b.code),b.n,rgb);
+        if(duplex)out.addPage([w,h]);                       // blank back of separator
+        for(let k=0;k<b.n;k++){
+          for(const e of emb){const p=out.addPage([e.width,e.height]);p.drawPage(e,{x:0,y:0,width:e.width,height:e.height});}
+          if(duplex&&emb.length%2)out.addPage([w,h]);         // pad odd-page papers: each copy starts on a new sheet
+        }
+      }
+      return{bytes:await out.save(),duplex,pages:out.getPageCount()};
+    }
+
+    const files=[];
+    if(mode==='course'){
+      for(const c of active){
+        if(!papers[c.code])continue;
+        const b=S.rooms.map(r=>({code:c.code,room:r,n:+c.counts[r]||0})).filter(x=>x.n>0);
+        files.push({name:`QP_${c.code.replace(/[^\w.-]+/g,'_')}_${tag}.pdf`,batches:b});
+      }
+    } else {
+      const b=[];
+      for(const r of S.rooms)for(const c of active){const n=+c.counts[r]||0;if(n&&papers[c.code])b.push({code:c.code,room:r,n});}
+      files.push({name:`QP_Master_${tag}.pdf`,batches:b});
+    }
+
+    const report=[];
+    for(const f of files){
+      const res=await makeDoc(f.batches);
+      downloadPdf(res.bytes,f.name);
+      report.push(`${esc(f.name)} — ${res.pages} pages — print <b>${res.duplex?'DOUBLE-sided (flip on long edge)':'SINGLE-sided'}</b>`);
+    }
+    msg.style.color='var(--green)';
+    msg.innerHTML='✓ Downloaded:<br>'+report.join('<br>')+(missing.length?`<br><span style="color:var(--red)">Skipped (no PDF): ${esc(missing.join(', '))}</span>`:'');
+  }catch(e){
+    msg.style.color='var(--red)';msg.textContent='✗ Failed: '+e.message;
+  }
+}
+
+// ── START: import from generator link, else offer saved plan ─────
+(function init(){
+  const m=location.hash.match(/^#d=(.+)$/);
+  if(m){
+    try{
+      setState(JSON.parse(decodeURIComponent(m[1])),'✓ Imported from Seat Plan Generator');
+      try{history.replaceState(null,'',location.pathname);}catch(e){}
+      return;
+    }catch(e){}
+  }
+  renderSummary();
+  let d=null;try{d=JSON.parse(localStorage.getItem(KEY));}catch(e){}
+  if(d)$('srcNote').textContent='A saved seat plan is available — click "Load last generated seat plan".';
+})();
+window.addEventListener('beforeunload',e=>{if(Object.keys(papers).length){e.preventDefault();e.returnValue='';}});
+</script>
+</body>
+</html>
