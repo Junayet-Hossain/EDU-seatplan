@@ -264,11 +264,12 @@ async function build(mode){
     const report=[];
     for(const f of files){
       const res=await makeDoc(f.batches);
-      downloadPdf(res.bytes,f.name);
-      report.push(`${esc(f.name)} — ${res.pages} pages — print <b>${res.duplex?'DOUBLE-sided (flip on long edge)':'SINGLE-sided'}</b>`);
+      const url=URL.createObjectURL(new Blob([res.bytes],{type:'application/pdf'}));
+      report.push(`<a href="${url}" download="${esc(f.name)}" style="color:var(--navy);font-weight:700">⬇ ${esc(f.name)}</a> — ${res.pages} pages — print <b>${res.duplex?'DOUBLE-sided (flip on long edge)':'SINGLE-sided'}</b>`);
     }
     msg.style.color='var(--green)';
-    msg.innerHTML='✓ Downloaded:<br>'+report.join('<br>')+(missing.length?`<br><span style="color:var(--red)">Skipped (no PDF): ${esc(missing.join(', '))}</span>`:'');
+    msg.innerHTML='✓ Ready — click each file to download:<br>'+report.join('<br>')+(missing.length?`<br><span style="color:var(--red)">Skipped (no PDF): ${esc(missing.join(', '))}</span>`:'');
+    if(files.length===1)msg.querySelector('a').click(); // single file (e.g. master PDF): download automatically
   }catch(e){
     msg.style.color='var(--red)';msg.textContent='✗ Failed: '+e.message;
   }
