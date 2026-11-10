@@ -161,6 +161,7 @@
     <button class="gen-btn" onclick="generate()">⚡ Generate Seat Plan</button>
     <button class="print-btn" onclick="window.print()">🖨 Print / Export PDF</button>
     <button class="print-btn" style="margin-top:6px;border-color:var(--gold);color:var(--gold)" onclick="exportDocx()">📄 Export Word (.docx)</button>
+    <button class="print-btn" style="margin-top:6px" onclick="openQuestionPrint()">🖨 Question Paper Printing</button>
   </aside>
   <main class="output" id="output">
     <div class="placeholder">
@@ -675,6 +676,7 @@ if(adjErrors.length)errors.unshift(...adjErrors);
       for(let c=1;c<=room.cols;c++){_manualCorners[room.id][c]=null;_manualCorners[room.id]['b'+c]=null;}
   }
   _lastColourMap=colourMap;
+  _qpDismissed=false;
   _lastGrids={};
   _lastValidCourses=validCourses;
   _lastRooms=rooms;
@@ -710,7 +712,7 @@ if(adjErrors.length)errors.unshift(...adjErrors);
 
   let html='';
   if(hardErrors.length)html+=`<div class="error-box"><strong>⚠ Warning:</strong><br>${hardErrors.join('<br>')}</div>`;
-  html+=`<div id="progressBar"></div><div id="ovfNotice"></div>`;
+  html+=`<div id="progressBar"></div><div id="qpPrompt"></div><div id="ovfNotice"></div>`;
 
   html+=`<div class="status-bar">
     <div class="stat"><span class="stat-label">Total Students</span><span class="stat-value">${totalStudents}</span></div>
@@ -1383,12 +1385,57 @@ function _renderStudentList(){
   el.innerHTML=html+`</tbody></table></div>`;
 }
 
+// ── LINK TO QUESTION PRINTING PAGE ────────────────────────────────
+let _qpDismissed=false;
+function _summaryPayload(){
+  const map=_getFinalRoomMap();
+  return{
+    exam:document.getElementById('examName').value.trim(),
+    date:document.getElementById('examDate').value.trim(),
+    time:document.getElementById('examTime').value.trim(),
+    rooms:_lastRooms.map(r=>r.id),
+    courses:_lastValidCourses.map(c=>({code:c.code,counts:{...(map[c.code]||{})}}))
+  };
+}
+function _saveSummary(){
+  try{localStorage.setItem('eduSeatPlanSummary',JSON.stringify({..._summaryPayload(),savedAt:new Date().toLocaleString()}));}catch(e){}
+}
+function _extraLeft(){
+  return _unresolvedOvf.length-Object.values(_getPlacedCourses()).reduce((s,v)=>s+v,0);
+}
+function _planFinal(){
+  // Final = plan exists, no Extra Row student waiting, no "could not be placed" students
+  return _lastValidCourses.length>0&&_extraLeft()<=0&&!_lastValidCourses.some(c=>(c._unplaced||0)>0);
+}
+function openQuestionPrint(){
+  let url='print.html';
+  if(_lastValidCourses.length){
+    if(!_planFinal()&&!confirm('The seat plan is not final yet (students still waiting for a seat) — room counts may change.\n\nOpen Question Paper Printing with the current counts anyway?'))return;
+    _saveSummary();
+    url+='#d='+encodeURIComponent(JSON.stringify(_summaryPayload()));
+  }
+  const w=window.open(url,'_blank');
+  if(!w)alert('The browser blocked the new tab. Allow pop-ups for this page, or open print.html from the same folder.');
+}
+function _maybePromptQp(){
+  const el=document.getElementById('qpPrompt');if(!el)return;
+  if(!_planFinal()){el.innerHTML='';return;}
+  _saveSummary(); // final plan → saved for the printing page (also for later visits)
+  if(_qpDismissed){el.innerHTML='';return;}
+  el.innerHTML=`<div class="no-print" style="background:#eafaf1;border:1px solid #1e7d5a;border-radius:var(--radius);padding:12px 16px;margin-bottom:16px;font-size:13px;color:#1e7d5a;display:flex;flex-wrap:wrap;gap:10px;align-items:center">
+    <span>✅ Seat plan is final. Print the question papers too?</span>
+    <button onclick="openQuestionPrint()" style="padding:6px 14px;background:#1e7d5a;color:#fff;border:none;border-radius:var(--radius);font-weight:700;cursor:pointer">Yes, open Question Printing</button>
+    <button onclick="_qpDismissed=true;_maybePromptQp()" style="padding:6px 14px;background:none;border:1px solid #1e7d5a;color:#1e7d5a;border-radius:var(--radius);cursor:pointer">Not now</button>
+  </div>`;
+}
+
 // ── GUIDE ─────────────────────────────────────────────────────────
 function openGuide(){document.getElementById('guideOverlay').classList.add('open');}
 function closeGuide(){document.getElementById('guideOverlay').classList.remove('open');}
 document.addEventListener('keydown',e=>{if(e.key==='Escape')closeGuide();});
 
 function _renderProgress(){
+  _maybePromptQp(); // show "print question papers?" once the plan is final
   const el=document.getElementById('progressBar');if(!el)return;
   const manual=Object.values(_getPlacedCourses()).reduce((s,v)=>s+v,0);
   const totalExtra=_unresolvedOvf.length,left=totalExtra-manual;
