@@ -161,7 +161,7 @@
     <button class="gen-btn" onclick="generate()">⚡ Generate Seat Plan</button>
     <button class="print-btn" onclick="window.print()">🖨 Print / Export PDF</button>
     <button class="print-btn" style="margin-top:6px;border-color:var(--gold);color:var(--gold)" onclick="exportDocx()">📄 Export Word (.docx)</button>
-    <button class="print-btn" style="margin-top:6px" onclick="openQuestionPrint()">🖨 Question Paper Printing</button>
+    <a class="print-btn" href="print.html" target="_blank" onclick="return _qpPrepare(this)" style="display:block;margin-top:6px;text-align:center;text-decoration:none">🖨 Question Paper Printing</a>
   </aside>
   <main class="output" id="output">
     <div class="placeholder">
@@ -1407,16 +1407,18 @@ function _planFinal(){
   // Final = plan exists, no Extra Row student waiting, no "could not be placed" students
   return _lastValidCourses.length>0&&_extraLeft()<=0&&!_lastValidCourses.some(c=>(c._unplaced||0)>0);
 }
-function openQuestionPrint(){
+function _qpPrepare(a){
+  // Runs on the link click: builds the URL with the summary, then the browser opens it as a normal link (never pop-up blocked)
   let url='print.html';
   if(_lastValidCourses.length){
-    if(!_planFinal()&&!confirm('The seat plan is not final yet (students still waiting for a seat) — room counts may change.\n\nOpen Question Paper Printing with the current counts anyway?'))return;
+    if(!_planFinal()&&!confirm('The seat plan is not final yet (students still waiting for a seat) — room counts may change.\n\nOpen Question Paper Printing with the current counts anyway?'))return false;
     _saveSummary();
     url+='#d='+encodeURIComponent(JSON.stringify(_summaryPayload()));
   }
-  const w=window.open(url,'_blank');
-  if(!w)alert('The browser blocked the new tab. Allow pop-ups for this page, or open print.html from the same folder.');
+  a.href=url;
+  return true;
 }
+
 function _maybePromptQp(){
   const el=document.getElementById('qpPrompt');if(!el)return;
   if(!_planFinal()){el.innerHTML='';return;}
@@ -1424,7 +1426,7 @@ function _maybePromptQp(){
   if(_qpDismissed){el.innerHTML='';return;}
   el.innerHTML=`<div class="no-print" style="background:#eafaf1;border:1px solid #1e7d5a;border-radius:var(--radius);padding:12px 16px;margin-bottom:16px;font-size:13px;color:#1e7d5a;display:flex;flex-wrap:wrap;gap:10px;align-items:center">
     <span>✅ Seat plan is final. Print the question papers too?</span>
-    <button onclick="openQuestionPrint()" style="padding:6px 14px;background:#1e7d5a;color:#fff;border:none;border-radius:var(--radius);font-weight:700;cursor:pointer">Yes, open Question Printing</button>
+    <a href="print.html" target="_blank" onclick="return _qpPrepare(this)" style="padding:6px 14px;background:#1e7d5a;color:#fff;border-radius:var(--radius);font-weight:700;text-decoration:none">Yes, open Question Printing</a>
     <button onclick="_qpDismissed=true;_maybePromptQp()" style="padding:6px 14px;background:none;border:1px solid #1e7d5a;color:#1e7d5a;border-radius:var(--radius);cursor:pointer">Not now</button>
   </div>`;
 }
